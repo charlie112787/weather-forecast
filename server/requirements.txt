@@ -1,0 +1,15 @@
+# Web Framework 
+fastapi 
+uvicorn[standard] 
+ 
+# HTTP Requests 
+requests 
+ 
+# Firebase 
+firebase-admin 
+ 
+# Environment variables 
+python-dotenv 
+ 
+# Scheduler 
+apscheduler 

@@ -1,0 +1,20 @@
+{ 
+  "short_name": "天氣App", 
+  "name": "你的天氣與環境預警 App", 
+  "icons": [ 
+    { 
+      "src": "assets/icons/icon-192x192.png", 
+      "type": "image/png", 
+      "sizes": "192x192" 
+    }, 
+    { 
+      "src": "assets/icons/icon-512x512.png", 
+      "type": "image/png", 
+      "sizes": "512x512" 
+    } 
+  ], 
+  "start_url": ".", 
+  "display": "standalone", 
+  "theme_color": "#ffffff", 
+  "background_color": "#ffffff" 
+} 

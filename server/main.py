@@ -5,16 +5,16 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 
 # --- Add project root to Python path ---
-# This is to ensure that all modules can be imported correctly, especially by the reloader.
-project_root = os.path.abspath(os.path.dirname(__file__))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Ensure the repository root is on sys.path so 'server.*' imports work consistently
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 # --- End of path modification ---
 
-from api.weather import router as weather_router
+from server.api.weather import router as weather_router
 import asyncio
-from scheduler import jobs
-from scheduler.jobs import scheduler
+from server.scheduler import jobs
+from server.scheduler.jobs import scheduler
 
 load_dotenv()
 
@@ -46,5 +46,5 @@ async def root():
 app.include_router(weather_router, prefix="/api/weather")
 
 if __name__ == "__main__":
-    # Running with 'python -m uvicorn main:app' is recommended
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Running with 'python -m uvicorn server.main:app' is recommended
+    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)

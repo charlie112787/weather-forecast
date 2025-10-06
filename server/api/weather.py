@@ -1,12 +1,31 @@
+import logging
+import logging
+from datetime import datetime
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
-from server.core import calculation
-from server.scheduler import jobs
+from ..core import calculation
+from ..scheduler import jobs
+from ..core import codes
+from ..services import discord_sender
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 @router.get("/ping", summary="Health check")
 async def ping():
-    return {"status": "ok"}
+	return {"status": "ok"}
+
+
+@router.get("/all", summary="Get all weather data in the final JSON format")
+async def get_all_weather_data():
+    """
+    Provides a combined JSON output of all weather data.
+    """
+    final_json = jobs.get_cached_final_json()
+    if not final_json:
+        raise HTTPException(status_code=503, detail="The final JSON data is not available yet. Please try again in a moment.")
+    return final_json
 
 
 @router.get("/county/{county_name}", summary="Get CWA Forecast for a County")
@@ -16,129 +35,341 @@ async def get_county_forecast(county_name: str):
     """
     from urllib.parse import unquote
     decoded_county_name = unquote(county_name)
+    logger.info(f"Fetching forecast for county: {decoded_county_name}")
+    
+    try:
+        cwa_county_data = jobs.get_cached_cwa_county_data()
+        if not cwa_county_data or 'records' not in cwa_county_data:
+            logger.error("CWA county data not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "CWA county forecast data is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-    cwa_county_data = jobs.get_cached_cwa_county_data()
-    if not cwa_county_data or 'records' not in cwa_county_data:
-        raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+        # Find county
+        target = None
+        for loc in cwa_county_data['records'].get('location', []):
+            if loc.get('locationName') == decoded_county_name:
+                target = loc
+                break
 
-    # Find county
-    target = None
-    for loc in cwa_county_data['records'].get('location', []):
-        if loc.get('locationName') == decoded_county_name:
-            target = loc
-            break
+        if not target:
+            logger.error(f"County forecast not found: {decoded_county_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "County not found",
+                    "county": decoded_county_name,
+                    "message": f"Could not find forecast data for county '{decoded_county_name}'. Please check the county name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-    if not target:
-        raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+        # Simplify county elements (similar approach to township)
+        elements = {}
+        for element in target.get('weatherElement', []):
+            name = element.get('elementName')
+            value = None
+            time_arr = element.get('time') or []
+            if time_arr and time_arr[0].get('parameter'):
+                # County dataset uses 'parameter' instead of 'elementValue'
+                param = time_arr[0]['parameter']
+                value = param.get('parameterName')
+            elements[name] = value
 
-    # Simplify county elements (similar approach to township)
-    elements = {}
-    for element in target.get('weatherElement', []):
-        name = element.get('elementName')
-        value = None
-        time_arr = element.get('time') or []
-        if time_arr and time_arr[0].get('parameter'):
-            # County dataset uses 'parameter' instead of 'elementValue'
-            param = time_arr[0]['parameter']
-            value = param.get('parameterName')
-        elements[name] = value
+        result = {
+            "county": decoded_county_name,
+            "cwa_forecast": {
+                "temperature": elements.get("T"),
+                "chance_of_rain_12h": elements.get("PoP12h"),
+                "weather_description": elements.get("Wx"),
+            },
+        }
+        logger.info(f"Successfully fetched forecast for county: {decoded_county_name}")
+        return result
 
-    return {
-        "county": decoded_county_name,
-        "cwa_forecast": {
-            "temperature": elements.get("T"),
-            "chance_of_rain_12h": elements.get("PoP12h"),
-            "weather_description": elements.get("Wx"),
-        },
-    }
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching county forecast: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 
 @router.get("/metrics/images", summary="Get image-derived weather metrics")
 async def get_image_metrics():
-    metrics = jobs.get_cached_image_metrics()
-    if not metrics:
-        raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
-    return metrics
+	metrics = jobs.get_cached_image_metrics()
+	if not metrics:
+		raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
+	return metrics
 
 
 @router.get("/summary", summary="Get combined summary for a county")
-async def get_summary(county_name: str):
+async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str, Any]:
     """
     Combines CWA county-level temperature/weather with image-derived PoP6/PoP12 and AQI.
     """
-    from urllib.parse import unquote
-    decoded_county_name = unquote(county_name)
-    print(f"[summary] county={decoded_county_name}")
+    logger.info(f"Getting weather summary for county_name='{county_name}' code='{county_code}'")
+    
+    try:
+        from urllib.parse import unquote
+        if county_code:
+            decoded_county_name = codes.COUNTY_CODE_TO_NAME.get(county_code, county_code)
+        else:
+            decoded_county_name = unquote(county_name)
+        logger.info(f"Looking up county: {decoded_county_name}")
 
-    # County weather from CWA
-    cwa_county_data = jobs.get_cached_cwa_county_data()
-    if not cwa_county_data or 'records' not in cwa_county_data:
-        raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+        # County weather from CWA
+        cwa_county_data = jobs.get_cached_cwa_county_data()
+        if not cwa_county_data or 'records' not in cwa_county_data:
+            logger.error("CWA county data not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "CWA county forecast data is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-    target = None
-    for loc in cwa_county_data['records'].get('location', []):
-        if loc.get('locationName') == decoded_county_name:
-            target = loc
-            break
-    if not target:
-        raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+        target = None
+        for loc in cwa_county_data['records'].get('location', []):
+            if loc.get('locationName') == decoded_county_name:
+                target = loc
+                break
+                
+        if not target:
+            logger.error(f"County not found: {decoded_county_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "County not found",
+                    "county": decoded_county_name,
+                    "message": f"Could not find forecast data for county '{decoded_county_name}'. Please check the county name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-    elements = {}
-    for element in target.get('weatherElement', []):
-        name = element.get('elementName')
-        value = None
-        time_arr = element.get('time') or []
-        if time_arr and time_arr[0].get('parameter'):
-            param = time_arr[0]['parameter']
-            value = param.get('parameterName')
-        elements[name] = value
+        elements = {}
+        for element in target.get('weatherElement', []):
+            name = element.get('elementName')
+            value = None
+            time_arr = element.get('time') or []
+            if time_arr and time_arr[0].get('parameter'):
+                param = time_arr[0]['parameter']
+                value = param.get('parameterName')
+            elements[name] = value
 
-    # Image metrics
-    metrics = jobs.get_cached_image_metrics() or {}
-    qpf_for_county = jobs.get_qpf_for_county(decoded_county_name) or {}
+        # Image metrics
+        metrics = jobs.get_cached_image_metrics() or {}
+        qpf_for_county = jobs.get_qpf_for_county(decoded_county_name) or {}
 
-    resp = {
-        "county": decoded_county_name,
-        "temperature": elements.get("T"),
-        "weather_description": elements.get("Wx"),
-        "pop12_percent": metrics.get("pop12_percent"),
-        "pop6_percent": metrics.get("pop6_percent"),
-        "qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
-        "qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
-        "aqi_level": metrics.get("aqi_level"),
-    }
-    print(f"[summary] resp={resp}")
-    return resp
+        resp = {
+            "county": decoded_county_name,
+            "temperature": elements.get("T"),
+            "weather_description": elements.get("Wx"),
+            "pop12_percent": metrics.get("pop12_percent"),
+            "pop6_percent": metrics.get("pop6_percent"),
+            "qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
+            "aqi_level": metrics.get("aqi_level"),
+        }
+        logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
+        return resp
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching county summary: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 
 @router.get("/debug/townships", summary="Debug: list discovered township names")
 async def debug_list_townships(limit: int = 50):
-    data = jobs.get_cached_cwa_township_data()
+    data = jobs.get_cached_township_map()
     if not data:
         return {"townships": []}
-    names = calculation.list_township_names(data, limit=limit)
-    return {"townships": names, "count": len(names)}
+    names = list(data.keys())[:limit]
+    return {"townships": names, "count": len(data)}
 
 
-@router.get("/{township_name}", summary="Get CWA Forecast for a Township")
-async def get_township_forecast(township_name: str):
+@router.get("/codes", summary="List supported county/township codes")
+async def list_codes():
+    return {
+        "counties": codes.COUNTY_NAME_TO_CODE,
+        "townships": codes.TOWNSHIP_NAME_TO_CODE,
+    }
+
+
+@router.get("/", summary="Get CWA Forecast for a Township")
+async def get_township_forecast(township_name: str = "", township_code: str = ""):
     """
     Provides a CWA forecast for a specific township based on cached data.
     """
-    from urllib.parse import unquote
-    decoded_township_name = unquote(township_name)
+    logger.info(f"Getting township forecast for name='{township_name}' code='{township_code}'")
+    
+    try:
+        from urllib.parse import unquote
+        if township_code:
+            decoded_township_name = codes.TOWNSHIP_CODE_TO_NAME.get(township_code, township_code)
+            logger.info(f"Looking up township by code: {township_code} -> {decoded_township_name}")
+        else:
+            decoded_township_name = unquote(township_name)
+            logger.info(f"Looking up township by name: {decoded_township_name}")
 
-    cwa_data = jobs.get_cached_cwa_township_data()
+        township_map = jobs.get_cached_township_map()
+        forecast = None
+        
+        if township_map:
+            forecast = calculation.get_forecast_for_township(
+                township_name=decoded_township_name,
+                township_map=township_map
+            )
+        else:
+            # Fallback: try to parse directly from full records if map not ready
+            logger.warning("Township map not available, falling back to full records")
+            cwa_full = jobs.get_cached_cwa_township_data()
+            if cwa_full:
+                forecast = calculation.get_forecast_for_township_from_records(
+                    township_name=decoded_township_name,
+                    all_cwa_data=cwa_full,
+                )
 
-    if not cwa_data:
-        raise HTTPException(status_code=503, detail="CWA forecast data is not available yet. Please try again in a moment.")
+        if not forecast:
+            logger.error(f"Township forecast not found: {decoded_township_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Township not found",
+                    "township": decoded_township_name,
+                    "message": f"Could not find forecast data for township '{decoded_township_name}'. Please check the township name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-    forecast = calculation.get_forecast_for_township(
-        township_name=decoded_township_name, 
-        all_cwa_data=cwa_data
-    )
+        # Attach county-derived metrics when possible
+        county_name = codes.resolve_county_from_township_name(decoded_township_name)
+        metrics = jobs.get_cached_image_metrics() or {}
+        qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+        
+        response = {
+            **forecast,
+            "qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
+            "pop12_percent": metrics.get("pop12_percent"),
+            "pop6_percent": metrics.get("pop6_percent"),
+            "aqi_level": metrics.get("aqi_level"),
+        }
+        logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
+        return response
 
-    if not forecast:
-        raise HTTPException(status_code=404, detail=f"Forecast for township '{decoded_township_name}' not found.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching township forecast: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
-    return forecast
+
+@router.post("/notify/township/{township_name}", summary="Send township summary to Discord")
+async def notify_township(township_name: str):
+    """
+    Send a township's weather forecast summary to Discord.
+    """
+    logger.info(f"Sending township forecast notification for: {township_name}")
+    
+    try:
+        from urllib.parse import unquote
+        decoded_township_name = unquote(township_name)
+
+        township_map = jobs.get_cached_township_map()
+        if not township_map:
+            logger.error("Township map not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "Township map is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+
+        forecast = calculation.get_forecast_for_township(
+            township_name=decoded_township_name,
+            township_map=township_map,
+        )
+        if not forecast:
+            logger.error(f"Township forecast not found: {decoded_township_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Township not found",
+                    "township": decoded_township_name,
+                    "message": f"Could not find forecast data for township '{decoded_township_name}'. Please check the township name.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+
+        county_name = codes.resolve_county_from_township_name(decoded_township_name)
+        metrics = jobs.get_cached_image_metrics() or {}
+        qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+
+        msg = (
+            f"天氣摘要 - {decoded_township_name}\n"
+            f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
+            f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
+            f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
+            f"QPF12(縣, mm/hr): {qpf_for_county.get('qpf12_mm_per_hr')}\n"
+            f"QPF6(縣, mm/hr): {qpf_for_county.get('qpf6_mm_per_hr')}\n"
+            f"PoP12(圖, %): {metrics.get('pop12_percent')}  PoP6(圖, %): {metrics.get('pop6_percent')}\n"
+            f"AQI: {metrics.get('aqi_level')}\n"
+        )
+
+        try:
+            discord_sender.send_to_discord(msg)
+            logger.info(f"Successfully sent Discord notification for township: {decoded_township_name}")
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"Failed to send Discord notification: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Discord notification failed",
+                    "message": "Failed to send notification to Discord. Please try again later.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in notify_township: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )

@@ -13,3 +13,6 @@ python-dotenv
  
 # Scheduler 
 apscheduler 
+
+# Image Processing
+Pillow

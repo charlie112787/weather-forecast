@@ -42,15 +42,31 @@ def get_cwa_township_forecast_data():
         return None
 
 def get_ncdr_image_url():
-    """Dynamically constructs the URL for a CWA product image.
-    
-    This assumes the target is the latest 6-hour QPF map from the NWRF model.
-    URL format may need adjustments based on actual NCDR/CWA system rules.
+    """Dynamically constructs the most recent valid URL for a CWA product image.
+
+    This function calculates the latest issue time based on CWA's typical schedule
+    (02Z, 08Z, 14Z, 20Z) to improve the chances of finding a valid image.
     """
-    now = datetime.now()
-    issue_time_str = now.strftime('%Y%m%d%H')
-    base_url = "https://www.cwa.gov.tw/Data/NWP/P_C_NWRF_6h_QPF_{time}_T06.png"
-    return base_url.replace('{time}', issue_time_str)
+    now_utc = datetime.utcnow()
+    from datetime import timedelta
+    issue_hours_utc = [2, 8, 14, 20]
+    
+    latest_issue_hour = -1
+    for hour in reversed(issue_hours_utc):
+        if now_utc.hour >= hour:
+            latest_issue_hour = hour
+            break
+    
+    issue_date = now_utc
+    if latest_issue_hour == -1:
+        issue_date -= timedelta(days=1)
+        latest_issue_hour = issue_hours_utc[-1]
+
+    issue_time = issue_date.replace(hour=latest_issue_hour, minute=0, second=0, microsecond=0)
+    issue_time_str = issue_time.strftime('%Y%m%d%H')
+    
+    base_url = f"https://www.cwa.gov.tw/Data/NWP/P_C_NWRF_6h_QPF_{issue_time_str}_T06.png"
+    return base_url
 
 def map_color_to_value(rgb_tuple):
     """

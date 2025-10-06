@@ -1,11 +1,11 @@
 import requests
 from .. import config
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 import io
+import math
 
 # --- NCDR Color to Rainfall Mapping ---
-# This map translates RGB colors to cumulative rainfall in millimeters.
 COLOR_TO_RAINFALL_MAPPING = {
     (230, 255, 230): 0.1,
     (170, 255, 170): 1.0,
@@ -42,13 +42,8 @@ def get_cwa_township_forecast_data():
         return None
 
 def get_ncdr_image_url():
-    """Dynamically constructs the most recent valid URL for a CWA product image.
-
-    This function calculates the latest issue time based on CWA's typical schedule
-    (02Z, 08Z, 14Z, 20Z) to improve the chances of finding a valid image.
-    """
+    """Dynamically constructs the most recent valid URL for a CWA product image."""
     now_utc = datetime.utcnow()
-    from datetime import timedelta
     issue_hours_utc = [2, 8, 14, 20]
     
     latest_issue_hour = -1
@@ -82,47 +77,46 @@ def map_color_to_value(rgb_tuple):
             rainfall_value = value
     return rainfall_value
 
-def precompute_ncdr_grid_data():
+def fetch_and_cache_ncdr_image():
     """
-    Downloads NCDR forecast images, processes them into a 10x7 grid of rainfall data.
+    Downloads NCDR forecast images and returns the PIL Image object.
     """
-    print("Running NCDR grid precomputation...")
-    
+    print("Running NCDR image fetch job...")
     ncdr_image_url = get_ncdr_image_url()
-    top_left_xy = (120, 100)
-    bottom_right_xy = (900, 1050)
-    grid_width = 7
-    grid_height = 10
-    
     try:
         print(f"Downloading NCDR image from: {ncdr_image_url}")
         response = requests.get(ncdr_image_url)
         response.raise_for_status()
         img = Image.open(io.BytesIO(response.content)).convert("RGB")
-        
-        ncdr_grid = {}
-        total_width = bottom_right_xy[0] - top_left_xy[0]
-        total_height = bottom_right_xy[1] - top_left_xy[1]
-        cell_width = total_width / grid_width
-        cell_height = total_height / grid_height
-        
-        print("Calculating grid data from image...")
-        for row in range(grid_height):
-            for col in range(grid_width):
-                center_x = int(top_left_xy[0] + (col + 0.5) * cell_width)
-                center_y = int(top_left_xy[1] + (row + 0.5) * cell_height)
-                rgb_tuple = img.getpixel((center_x, center_y))
-                rainfall_value = map_color_to_value(rgb_tuple)
-                
-                grid_id = f"R{row+1}_C{col+1}"
-                ncdr_grid[grid_id] = {"rainfall_mm": rainfall_value}
-
-        print(f"Successfully computed a {grid_height}x{grid_width} NCDR grid.")
-        return ncdr_grid
-        
+        print("Successfully fetched NCDR image.")
+        return img
     except requests.exceptions.HTTPError as e:
         print(f"Error downloading NCDR image (HTTP Error): {e}. URL used: {ncdr_image_url}")
         return {"message": "NCDR image download failed due to HTTP error (e.g., 404 Not Found)"}
     except Exception as e:
         print(f"Error processing NCDR image: {e}")
         return {"message": "NCDR image processing failed"}
+
+def get_max_rainfall_in_radius(img: Image, center_x: int, center_y: int, radius: int) -> float:
+    """
+    Scans a circular radius on the NCDR image to find the maximum rainfall value.
+    """
+    if not isinstance(img, Image.Image):
+        print("Error: NCDR image cache is not a valid PIL Image object.")
+        return 0.0
+        
+    max_rainfall = 0.0
+    img_width, img_height = img.size
+    
+    for x in range(center_x - radius, center_x + radius + 1):
+        for y in range(center_y - radius, center_y + radius + 1):
+            if 0 <= x < img_width and 0 <= y < img_height:
+                if math.sqrt((x - center_x)**2 + (y - center_y)**2) <= radius:
+                    try:
+                        rgb_tuple = img.getpixel((x, y))
+                        rainfall_value = map_color_to_value(rgb_tuple)
+                        if rainfall_value > max_rainfall:
+                            max_rainfall = rainfall_value
+                    except Exception as e:
+                        pass 
+    return max_rainfall

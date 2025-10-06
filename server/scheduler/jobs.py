@@ -1,6 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from ..core import data_fetcher, calculation
-from ..services import fcm_sender
+from server.core import data_fetcher, calculation
+from server.services import fcm_sender
 from PIL import Image
 
 scheduler = AsyncIOScheduler()

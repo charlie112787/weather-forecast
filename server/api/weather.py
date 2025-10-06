@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from ..core import calculation
-from ..scheduler import jobs
+from server.core import calculation
+from server.scheduler import jobs
 
 router = APIRouter()
 

@@ -174,7 +174,7 @@ def get_forecast_for_township(township_name: str, all_cwa_data: dict, ncdr_image
     else:
         center_x, center_y = TOWNSHIP_TO_CENTER_PIXEL[township_name]
         
-        from . import data_fetcher
+        from server.core import data_fetcher
         max_rainfall_value = data_fetcher.get_max_rainfall_in_radius(
             img=ncdr_image_data, 
             center_x=center_x, 

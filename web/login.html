@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   
-  <!-- ✅ 修正 favicon 標籤 -->
   <link rel="icon" type="image/png" href="../web/image/TWA-LOGO.png">
 
   <title>Taiwan Weather Alert</title>
@@ -14,78 +13,43 @@
 
 
   <link rel="stylesheet" href="../web/css/style.css">
+  <link rel="stylesheet" href="../web/css/style-login.css">
+  <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
 </head>
 
 <body>
-  <div class="container">
-    <!-- ====== HEADER ====== -->
-    <header>
-    <div class="container">
-     <header>
-      <div class="brand">
-        <div class="logo">W</div>
-        <div>
-          <h1>天氣預報</h1>
-          <p>當天天氣資訊</p>
-        </div>
+
+    
+    
+      <div class="wrapper">
+        <form>
+            <h1>登入</h1>
+                <div class="input-box">
+                    <input type="輸入" placeholder="User name"
+                    required>
+                    <i class='bx bxs-user'></i>
+                </div>
+                <div class="input-box">
+                    <input type="密碼" placeholder="Password"
+                    required>
+                    <i class='bx bxs-lock-alt' ></i>
+                </div>
+                <div class="remember-forgot">
+                 <label><input type="checkbox"> 記住我</label>
+                 <a href="#">忘記密碼??</a> 
+                </div>
+                <button type="submit" class="btn">登入</button>
+                <div class="register-link">
+                  <p>沒有帳號??<a
+                     href="#">申請一個?</a></p>
+                 
+                </div>
+        </form>
       </div>
-
-      <div class="search">
-        <input id="cityInput" placeholder="輸入城市（例如：Taipei）" />
-        <button id="searchBtn">查詢</button>
-      </div>
-    </header>
-
-    <!-- ====== MAIN ====== -->
-    <main>
-      <section class="card current" id="leftColumn">
-        <div class="top-row">
-          <div>
-            <div class="meta" id="location">臺北市 · 現在</div>
-            <div class="temp" id="temperature">--°C</div>
-            <div class="meta" id="condition">晴時多雲</div>
-          </div>
-
-          <div class="icon-wrap" id="weatherIcon">
-            <svg width="72" height="72" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 14C5 14 4 13 4 12C4 10 6 9 8 9C9 9 10 9 11 8C12 7 14 7 15 8C16 9 17 10 18 10C20 10 22 11 22 13C22 15 20 17 18 17H7"
-                    stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-        </div>
-
-        <div class="details">
-          <div class="badge">溫度感：<span id="feels">--°C</span></div>
-          <div class="badge">濕度：<span id="humidity">--%</span></div>
-          <div class="badge">風速：<span id="wind">-- m/s</span></div>
-          <div class="badge">氣壓：<span id="pressure">-- hPa</span></div>
-        </div>
-
-        <div>
-          <h3>未來 7 天</h3>
-          <div class="forecast" id="forecastList"></div>
-        </div>
-      </section>
-
-      <!-- ====== 右側資訊 ====== -->
-      <aside class="right-grid">
-        <div class="card chart-box" id="chartCard">
-          <canvas id="tempChart" width="600" height="220"></canvas>
-        </div>
-
-        <div class="card">
-          <h3>介面說明（給設計師）</h3>
-          <ul style="color:var(--muted);line-height:1.6">
-            <li>背景為可更換漸層或圖片，修改 style.css 中 body 部分。</li>
-            <li>Icon 建議使用 SVG，可加動畫或濾鏡效果。</li>
-            <li>天氣卡片可依天氣狀況切換底圖。</li>
-          </ul>
-        </div>
-      </aside>
-    </main>
+    
 
     <footer>© 2025 Taiwan Weather Alert</footer>
-  </div>
+    
 
   <script src="app.js"></script>
 </body>

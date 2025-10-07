@@ -173,21 +173,17 @@ if __name__ == "__main__":
 
 import sys
 import os
+
+# Add the project root to the Python path to resolve module import issues
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import uvicorn
 from fastapi import FastAPI
 from dotenv import load_dotenv
-
-# --- Add project root to Python path ---
-# Ensure the repository root is on sys.path so 'server.*' imports work consistently
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-# --- End of path modification ---
-
-from server.api.weather import router as weather_router
+from api.weather import router as weather_router
 import asyncio
-from server.scheduler import jobs
-from server.scheduler.jobs import scheduler
+from scheduler import jobs
+from scheduler.jobs import scheduler
 
 load_dotenv()
 
@@ -219,8 +215,8 @@ async def root():
 app.include_router(weather_router, prefix="/api/weather")
 
 if __name__ == "__main__":
-    # Running with 'python -m uvicorn server.main:app' is recommended
-    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
 ==================== FILE: serviceAccountKey.json ====================
 
 {
@@ -239,11 +235,16 @@ if __name__ == "__main__":
 
 ==================== FILE: api\weather.py ====================
 
+import logging
+from datetime import datetime
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
-from server.core import calculation
-from server.scheduler import jobs
-from server.core import codes
-from server.services import discord_sender
+from core import calculation
+from scheduler import jobs
+from core import codes
+from services import discord_sender
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -257,7 +258,7 @@ async def get_all_weather_data():
     """
     Provides a combined JSON output of all weather data.
     """
-    final_json = jobs.get_cached_final_json()
+    final_json = jobs.get_cached_weather_data()
     if not final_json:
         raise HTTPException(status_code=503, detail="The final JSON data is not available yet. Please try again in a moment.")
     return final_json
@@ -265,203 +266,316 @@ async def get_all_weather_data():
 
 @router.get("/county/{county_name}", summary="Get CWA Forecast for a County")
 async def get_county_forecast(county_name: str):
-	"""
-	Provides a CWA forecast for a specific county based on cached data.
-	"""
-	from urllib.parse import unquote
-	decoded_county_name = unquote(county_name)
+    """
+    Provides a CWA forecast for a specific county based on cached data.
+    """
+    from urllib.parse import unquote
+    decoded_county_name = unquote(county_name)
+    logger.info(f"Fetching forecast for county: {decoded_county_name}")
+    
+    try:
+        cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+        if not cwa_county_data:
+            logger.error("CWA county data not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "CWA county forecast data is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	cwa_county_data = jobs.get_cached_cwa_county_data()
-	if not cwa_county_data or 'records' not in cwa_county_data:
-		raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+        # Find county
+        target = cwa_county_data.get(decoded_county_name)
 
-	# Find county
-	target = None
-	for loc in cwa_county_data['records'].get('location', []):
-		if loc.get('locationName') == decoded_county_name:
-			target = loc
-			break
+        if not target:
+            logger.error(f"County forecast not found: {decoded_county_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "County not found",
+                    "county": decoded_county_name,
+                    "message": f"Could not find forecast data for county '{decoded_county_name}'. Please check the county name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	if not target:
-		raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+        # Simplify county elements (similar approach to township)
+        elements = target
 
-	# Simplify county elements (similar approach to township)
-	elements = {}
-	for element in target.get('weatherElement', []):
-		name = element.get('elementName')
-		value = None
-		time_arr = element.get('time') or []
-		if time_arr and time_arr[0].get('parameter'):
-			# County dataset uses 'parameter' instead of 'elementValue'
-			param = time_arr[0]['parameter']
-			value = param.get('parameterName')
-		elements[name] = value
+        result = {
+            "county": decoded_county_name,
+            "cwa_forecast": {
+                "temperature": elements.get("T"),
+                "chance_of_rain_12h": elements.get("PoP12h"),
+                "weather_description": elements.get("Wx"),
+            },
+        }
+        logger.info(f"Successfully fetched forecast for county: {decoded_county_name}")
+        return result
 
-	return {
-		"county": decoded_county_name,
-		"cwa_forecast": {
-			"temperature": elements.get("T"),
-			"chance_of_rain_12h": elements.get("PoP12h"),
-			"weather_description": elements.get("Wx"),
-		},
-	}
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching county forecast: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 
 @router.get("/metrics/images", summary="Get image-derived weather metrics")
 async def get_image_metrics():
-	metrics = jobs.get_cached_image_metrics()
-	if not metrics:
-		raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
-	return metrics
+    metrics = jobs.CACHED_IMAGE_METRICS
+    if not metrics:
+        raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
+    return metrics
 
 
 @router.get("/summary", summary="Get combined summary for a county")
-async def get_summary(county_name: str = "", county_code: str = ""):
-	"""
-	Combines CWA county-level temperature/weather with image-derived PoP6/PoP12 and AQI.
-	"""
-	from urllib.parse import unquote
-	if county_code:
-		decoded_county_name = codes.COUNTY_CODE_TO_NAME.get(county_code, county_code)
-	else:
-		decoded_county_name = unquote(county_name)
-	print(f"[summary] county={decoded_county_name}")
+async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str, Any]:
+    """
+    Combines CWA county-level temperature/weather with image-derived PoP6/PoP12 and AQI.
+    """
+    logger.info(f"Getting weather summary for county_name='{county_name}' code='{county_code}'")
+    
+    try:
+        from urllib.parse import unquote
+        if county_code:
+            decoded_county_name = codes.COUNTY_CODE_TO_NAME.get(county_code, county_code)
+        else:
+            decoded_county_name = unquote(county_name)
+        logger.info(f"Looking up county: {decoded_county_name}")
 
-	# County weather from CWA
-	cwa_county_data = jobs.get_cached_cwa_county_data()
-	if not cwa_county_data or 'records' not in cwa_county_data:
-		raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+        # County weather from CWA
+        cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+        if not cwa_county_data:
+            logger.error("CWA county data not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "CWA county forecast data is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	target = None
-	for loc in cwa_county_data['records'].get('location', []):
-		if loc.get('locationName') == decoded_county_name:
-			target = loc
-			break
-	if not target:
-		raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+        target = cwa_county_data.get(decoded_county_name)
+                
+        if not target:
+            logger.error(f"County not found: {decoded_county_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "County not found",
+                    "county": decoded_county_name,
+                    "message": f"Could not find forecast data for county '{decoded_county_name}'. Please check the county name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	elements = {}
-	for element in target.get('weatherElement', []):
-		name = element.get('elementName')
-		value = None
-		time_arr = element.get('time') or []
-		if time_arr and time_arr[0].get('parameter'):
-			param = time_arr[0]['parameter']
-			value = param.get('parameterName')
-		elements[name] = value
+        elements = target
 
-	# Image metrics
-	metrics = jobs.get_cached_image_metrics() or {}
-	qpf_for_county = jobs.get_qpf_for_county(decoded_county_name) or {}
+        # Image metrics from the consolidated cache
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(decoded_county_name) or {}
 
-	resp = {
-		"county": decoded_county_name,
-		"temperature": elements.get("T"),
-		"weather_description": elements.get("Wx"),
-		"pop12_percent": metrics.get("pop12_percent"),
-		"pop6_percent": metrics.get("pop6_percent"),
-		"qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
-		"qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
-		"aqi_level": metrics.get("aqi_level"),
-	}
-	print(f"[summary] resp={resp}")
-	return resp
+        resp = {
+            "county": decoded_county_name,
+            "temperature": elements.get("T"),
+            "weather_description": elements.get("Wx"),
+            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "aqi_level": image_metrics.get("aqi_level"),
+        }
+        logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
+        return resp
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching county summary: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 
 @router.get("/debug/townships", summary="Debug: list discovered township names")
 async def debug_list_townships(limit: int = 50):
-	data = jobs.get_cached_township_map()
-	if not data:
-		return {"townships": []}
-	names = list(data.keys())[:limit]
-	return {"townships": names, "count": len(data)}
+    data = jobs.get_cached_weather_data().get('township_weather')
+    if not data:
+        return {"townships": []}
+    names = list(data.keys())[:limit]
+    return {"townships": names, "count": len(data)}
 
 
 @router.get("/codes", summary="List supported county/township codes")
 async def list_codes():
-	return {
-		"counties": codes.COUNTY_NAME_TO_CODE,
-		"townships": codes.TOWNSHIP_NAME_TO_CODE,
-	}
+    return {
+        "counties": codes.COUNTY_NAME_TO_CODE,
+        "townships": codes.TOWNSHIP_NAME_TO_CODE,
+    }
 
 
-@router.get("/{township_name}", summary="Get CWA Forecast for a Township")
+@router.get("/", summary="Get CWA Forecast for a Township")
 async def get_township_forecast(township_name: str = "", township_code: str = ""):
-	"""
-	Provides a CWA forecast for a specific township based on cached data.
-	"""
-	from urllib.parse import unquote
-	if township_code:
-		decoded_township_name = codes.TOWNSHIP_CODE_TO_NAME.get(township_code, township_code)
-	else:
-		decoded_township_name = unquote(township_name)
+    """
+    Provides a CWA forecast for a specific township based on cached data.
+    """
+    logger.info(f"Getting township forecast for name='{township_name}' code='{township_code}'")
+    
+    try:
+        from urllib.parse import unquote
+        if township_code:
+            decoded_township_name = codes.TOWNSHIP_CODE_TO_NAME.get(township_code, township_code)
+            logger.info(f"Looking up township by code: {township_code} -> {decoded_township_name}")
+        else:
+            decoded_township_name = unquote(township_name)
+            logger.info(f"Looking up township by name: {decoded_township_name}")
 
-	township_map = jobs.get_cached_township_map()
-	forecast = None
-	if township_map:
-		forecast = calculation.get_forecast_for_township(
-			township_name=decoded_township_name,
-			township_map=township_map
-		)
-	else:
-		# Fallback: try to parse directly from full records if map not ready
-		cwa_full = jobs.get_cached_cwa_township_data()
-		if cwa_full:
-			forecast = calculation.get_forecast_for_township_from_records(
-				township_name=decoded_township_name,
-				all_cwa_data=cwa_full,
-			)
+        township_map = jobs.get_cached_weather_data().get('township_weather')
+        forecast = None
+        
+        if township_map:
+            forecast = calculation.get_forecast_for_township(
+                township_name=decoded_township_name,
+                township_map=township_map
+            )
+        else:
+            # Fallback: try to parse directly from full records if map not ready
+            logger.warning("Township map not available, falling back to full records")
+            cwa_full = jobs.CACHED_CWA_TOWNSHIP_DATA
+            if cwa_full:
+                forecast = calculation.get_forecast_for_township_from_records(
+                    township_name=decoded_township_name,
+                    all_cwa_data=cwa_full,
+                )
 
-	if not forecast:
-		raise HTTPException(status_code=404, detail=f"Forecast for township '{decoded_township_name}' not found.")
+        if not forecast:
+            logger.error(f"Township forecast not found: {decoded_township_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Township not found",
+                    "township": decoded_township_name,
+                    "message": f"Could not find forecast data for township '{decoded_township_name}'. Please check the township name or code.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	# Attach county-derived metrics when possible
-	county_name = codes.resolve_county_from_township_name(decoded_township_name)
-	metrics = jobs.get_cached_image_metrics() or {}
-	qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
-	return {
-		**forecast,
-		"qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
-		"qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
-		"pop12_percent": metrics.get("pop12_percent"),
-		"pop6_percent": metrics.get("pop6_percent"),
-		"aqi_level": metrics.get("aqi_level"),
-	}
+        # Attach county-derived metrics from the consolidated image metrics cache
+        county_name = codes.resolve_county_from_township_name(decoded_township_name)
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
+
+        response = {
+            **forecast,
+            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "aqi_level": image_metrics.get("aqi_level"),
+        }
+        logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching township forecast: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 
 @router.post("/notify/township/{township_name}", summary="Send township summary to Discord")
 async def notify_township(township_name: str):
-	from urllib.parse import unquote
-	decoded_township_name = unquote(township_name)
+    """
+    Send a township's weather forecast summary to Discord.
+    """
+    logger.info(f"Sending township forecast notification for: {township_name}")
+    
+    try:
+        from urllib.parse import unquote
+        decoded_township_name = unquote(township_name)
 
-	township_map = jobs.get_cached_township_map()
-	if not township_map:
-		raise HTTPException(status_code=503, detail="Township map is not available yet. Please try again in a moment.")
+        township_map = jobs.get_cached_weather_data().get('township_weather')
+        if not township_map:
+            logger.error("Township map not available")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Data unavailable",
+                    "message": "Township map is not available yet. Please try again in a moment.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	forecast = calculation.get_forecast_for_township(
-		township_name=decoded_township_name,
-		township_map=township_map,
-	)
-	if not forecast:
-		raise HTTPException(status_code=404, detail=f"Forecast for township '{decoded_township_name}' not found.")
+        forecast = calculation.get_forecast_for_township(
+            township_name=decoded_township_name,
+            township_map=township_map,
+        )
+        if not forecast:
+            logger.error(f"Township forecast not found: {decoded_township_name}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Township not found",
+                    "township": decoded_township_name,
+                    "message": f"Could not find forecast data for township '{decoded_township_name}'. Please check the township name.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
 
-	county_name = codes.resolve_county_from_township_name(decoded_township_name)
-	metrics = jobs.get_cached_image_metrics() or {}
-	qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+        county_name = codes.resolve_county_from_township_name(decoded_township_name)
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
 
-	msg = (
-		f"天氣摘要 - {decoded_township_name}\n"
-		f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
-		f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
-		f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
-		f"QPF12(縣, mm/hr): {qpf_for_county.get('qpf12_mm_per_hr')}\n"
-		f"QPF6(縣, mm/hr): {qpf_for_county.get('qpf6_mm_per_hr')}\n"
-		f"PoP12(圖, %): {metrics.get('pop12_percent')}  PoP6(圖, %): {metrics.get('pop6_percent')}\n"
-		f"AQI: {metrics.get('aqi_level')}\n"
-	)
+        msg = (
+            f"天氣摘要 - {decoded_township_name}\n"
+            f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
+            f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
+            f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
+            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_mm_per_hr')}\n"
+            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_mm_per_hr')}\n"
+            f"AQI 等級(縣): {image_metrics.get('aqi_level')}\n"
+        )
 
-	discord_sender.send_to_discord(msg)
-	return {"ok": True}
+        try:
+            discord_sender.send_to_discord(msg)
+            logger.info(f"Successfully sent Discord notification for township: {decoded_township_name}")
+            return {"ok": True}
+        except Exception as e:
+            logger.error(f"Failed to send Discord notification: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "Discord notification failed",
+                    "message": "Failed to send notification to Discord. Please try again later.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in notify_township: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request.",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
 ==================== FILE: api\__init__.py ====================
 
@@ -850,7 +964,6 @@ TOWNSHIP_NAME_TO_CODE: Dict[str, str] = {
     "雲林縣古坑鄉": "YUN-646",
     "雲林縣莿桐鄉": "YUN-647",
     "雲林縣林內鄉": "YUN-648",
-    "雲林縣民雄鄉": "YUN-621", # 註：此為民雄鄉 (嘉義縣) 錯誤數據，此處為郵遞區號範圍
     "雲林縣西螺鎮": "YUN-648",
     "雲林縣二崙鄉": "YUN-649",
     "雲林縣北港鎮": "YUN-651",
@@ -929,7 +1042,6 @@ TOWNSHIP_NAME_TO_CODE: Dict[str, str] = {
     # ----------------------
     "高雄市新興區": "KHH-800",
     "高雄市前金區": "KHH-801",
-    "高雄市新興區": "KHH-800",
     "高雄市苓雅區": "KHH-802",
     "高雄市前鎮區": "KHH-806",
     "高雄市旗津區": "KHH-805",
@@ -1084,6 +1196,15 @@ TOWNSHIP_NAME_TO_CODE: Dict[str, str] = {
 
 TOWNSHIP_CODE_TO_NAME: Dict[str, str] = {code: name for name, code in TOWNSHIP_NAME_TO_CODE.items()}
 
+def normalize_name(name: str) -> str:
+    """
+    Normalize the name by replacing common variants.
+    Example: "台北" -> "臺北".
+    """
+    if not isinstance(name, str):
+        return ""
+    return name.replace("台", "臺").strip()
+
 def resolve_county_from_township_name(township_name: str) -> str:
     """
     Best-effort derive county name from a full township name by prefix match on known counties.
@@ -1091,11 +1212,46 @@ def resolve_county_from_township_name(township_name: str) -> str:
     """
     if not isinstance(township_name, str):
         return ""
-    normalized = township_name.replace("台", "臺").strip()
+    normalized = normalize_name(township_name)
     # Prefer longer names first to avoid partial collisions
     for county in sorted(COUNTY_NAME_TO_CODE.keys(), key=len, reverse=True):
         if normalized.startswith(county):
             return county
+    return ""
+
+def resolve_township_name(township_name: str) -> str:
+    """
+    Get the standardized township name.
+    Example: "臺北中正" -> "臺北市中正區".
+    """
+    if not isinstance(township_name, str):
+        return ""
+    
+    normalized = normalize_name(township_name)
+    
+    # 如果已經是標準格式，直接返回
+    if normalized in TOWNSHIP_NAME_TO_CODE:
+        return normalized
+    
+    # 嘗試匹配縣市
+    county = resolve_county_from_township_name(normalized)
+    if not county:
+        return ""
+    
+    # 移除縣市名稱，只保留地區名稱
+    district = normalized[len(county):].strip()
+    
+    # 嘗試不同的後綴（區、鎮、市、鄉）
+    suffixes = ["區", "鎮", "市", "鄉"]
+    for suffix in suffixes:
+        if district.endswith(suffix):
+            break
+        if not district.endswith(suffix):
+            full_name = f"{county}{district}{suffix}"
+            if full_name in TOWNSHIP_NAME_TO_CODE:
+                return full_name
+    
+    # 如果沒有找到匹配的格式，返回空字符串
     return ""
 
 
@@ -1106,7 +1262,7 @@ import certifi
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from .. import config
+import config
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 
@@ -1242,6 +1398,7 @@ def get_cwa_county_forecast_data():
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA county data: {e}")
         return None
+
 ==================== FILE: core\image_analyzer.py ====================
 
 import io
@@ -1464,8 +1621,8 @@ def resolve_latest_url(patterns: List[str], now: Optional[datetime] = None, hour
 
 
 import datetime
-from server.scheduler import jobs
-from server.core import codes
+from scheduler import jobs
+from . import codes
 
 def generate_json_output():
     """
@@ -1473,9 +1630,9 @@ def generate_json_output():
     """
     update_time = datetime.datetime.now().isoformat()
     
-    cwa_county_data = jobs.get_cached_cwa_county_data()
-    cwa_township_data = jobs.get_cached_cwa_township_data()
-    image_metrics = jobs.get_cached_image_metrics()
+    cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+    cwa_township_data = jobs.get_cached_weather_data().get('township_weather')
+    image_metrics = jobs.CACHED_IMAGE_METRICS
     
     if not cwa_county_data or not cwa_township_data:
         return None
@@ -1585,11 +1742,11 @@ def generate_json_output():
 ==================== FILE: scheduler\jobs.py ====================
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from server.core import data_fetcher, calculation, json_generator
-from server.core import image_analyzer
-from server.core import image_url_resolver
-from server import config
-from server.services import fcm_sender, discord_sender
+from core import data_fetcher, calculation, json_generator
+from core import image_analyzer
+from core import image_url_resolver
+import config
+from services import fcm_sender, discord_sender
 import asyncio
 
 scheduler = AsyncIOScheduler()
@@ -1625,72 +1782,17 @@ def _normalize_name(name: str) -> str:
     return name.replace("台", "臺").replace(" ", "").strip()
 
 def _iter_all_locations(records: object):
-    # Yield all location dicts from various possible shapes
+    """
+    Iterates through the standardized locations structure from get_cwa_township_forecast_data.
+    """
     if not isinstance(records, dict):
         return
-    # Case 1: records.location is a list
-    loc_list = records.get('location') if isinstance(records, dict) else None
-    if isinstance(loc_list, list):
-        for loc in loc_list:
-            if isinstance(loc, dict):
-                yield loc
-    # Case 2: records.locations is a list of groups, each with group.location list
-    groups = records.get('locations') if isinstance(records, dict) else None
-    if isinstance(groups, list):
-        for group in groups:
-            if isinstance(group, dict):
-                for loc in group.get('location', []) if isinstance(group.get('location'), list) else []:
-                    if isinstance(loc, dict):
-                        # Some structures have an extra nested 'location' list under each county
-                        inner = loc.get('location')
-                        if isinstance(inner, list):
-                            for inner_loc in inner:
-                                if isinstance(inner_loc, dict):
-                                    yield inner_loc
-                        else:
-                            yield loc
-    # Case 3: records.locations is a dict with key 'location' list
-    if isinstance(groups, dict):
-        inner_locs = groups.get('location')
-        if isinstance(inner_locs, list):
-            for loc in inner_locs:
-                if isinstance(loc, dict):
-                    inner = loc.get('location')
-                    if isinstance(inner, list):
-                        for inner_loc in inner:
-                            if isinstance(inner_loc, dict):
-                                yield inner_loc
-                    else:
-                        yield loc
-    # Case 4: Capitalized structure: records['Locations']['Location'] list
-    cap_groups = records.get('Locations')
-    if isinstance(cap_groups, dict):
-        cap_inner = cap_groups.get('Location')
-        if isinstance(cap_inner, list):
-            for loc in cap_inner:
-                if isinstance(loc, dict):
-                    inner = loc.get('location') or loc.get('Location')
-                    if isinstance(inner, list):
-                        for inner_loc in inner:
-                            if isinstance(inner_loc, dict):
-                                yield inner_loc
-                    else:
-                        yield loc
-    if isinstance(cap_groups, list):
-        for group in cap_groups:
-            if isinstance(group, dict):
-                # group keys example: 'DatasetDescription', 'LocationsName', 'Dataid', 'Location'
-                cap_inner = group.get('Location')
-                if isinstance(cap_inner, list):
-                    for loc in cap_inner:
-                        if isinstance(loc, dict):
-                            inner = loc.get('location') or loc.get('Location')
-                            if isinstance(inner, list):
-                                for inner_loc in inner:
-                                    if isinstance(inner_loc, dict):
-                                        yield inner_loc
-                            else:
-                                yield loc
+    
+    locations_data = records.get('locations', [])
+    for location_group in locations_data:
+        if isinstance(location_group, dict):
+            for location in location_group.get('location', []):
+                yield location
 
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
@@ -1740,30 +1842,11 @@ async def _fetch_weather_data(county_data=None):
     # 處理鄉鎮資料
     township_weather = {}
     if all_township_data and 'records' in all_township_data:
-        for locations in all_township_data['records'].get('locations', []):
-            for location in locations.get('location', []):
-                township_name = location.get('locationName')
-                if township_name:
-                    # 從 locationName 取得縣市名稱和鄉鎮名稱
-                    parts = township_name.split('區') if '區' in township_name else township_name.split('鎮') if '鎮' in township_name else township_name.split('市') if '市' in township_name else [township_name]
-                    if len(parts) >= 2:
-                        county_name = parts[0]
-                        township_name = parts[1]
-                        full_name = f"{county_name}{township_name}"
-                    else:
-                        full_name = township_name
-                    weather_elements = {}
-                    for element in location.get('weatherElement', []):
-                        name = element.get('elementName')
-                        if name and element.get('time'):
-                            values = element['time'][0].get('elementValue', [])
-                            if values:
-                                weather_elements[name] = values[0].get('value')
-                    
-                    township_weather[full_name] = {
-                        'pop6h': weather_elements.get('6小時降雨機率'),
-                        'pop12h': weather_elements.get('12小時降雨機率')
-                    }
+        for location in _iter_all_locations(all_township_data['records']):
+            township_name = location.get('locationName')
+            if township_name:
+                # Store the entire location object, as this is what calculation.py expects
+                township_weather[_normalize_name(township_name)] = location
     
     return county_weather, township_weather, all_township_data
 
@@ -1797,178 +1880,69 @@ async def fetch_data_job():
         return
     
     # 分析圖片數據
-    pop12_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.POP12_URL_PATTERNS
-    )
-    pop6_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.POP6_URL_PATTERNS
-    )
-    
-    # 獲取降雨強度
-    qpf_data = {}
-    if pop12_url or pop6_url:
-        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
-            qpf12 = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image,
-                pop12_url,
-                coords
-            ) if pop12_url else None
-            
-            qpf6 = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image,
-                pop6_url,
-                coords
-            ) if pop6_url else None
-            
-            qpf_data[county_name] = {
-                'qpf12': qpf12,
-                'qpf6': qpf6
-            }
-    
-    # 獲取空氣品質數據
-    aqi_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.AQI_URL_PATTERNS
-    )
-    
-    aqi_data = {}
-    if aqi_url:
-        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
-            aqi = await asyncio.to_thread(
-                image_analyzer.analyze_aqi_from_image,
-                aqi_url,
-                coords
-            )
-            if aqi:
-                aqi_data[county_name] = aqi
-
-    # Image-derived metrics
     try:
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
-        # Resolve static or dynamic URLs for PoP12 / PoP6 (network I/O -> thread)
-        pop12_resolved = await asyncio.to_thread(
+
+        # Resolve image URLs
+        qpf12_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
         )
-        pop6_resolved = await asyncio.to_thread(
+        qpf6_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS
         )
-        pop12_url = (
-            config.POP12_IMAGE_URL or pop12_resolved or config.RAIN_PROBABILITY_IMAGE_URL
-        )
-        pop6_url = (
-            config.POP6_IMAGE_URL or pop6_resolved or config.RAIN_PROBABILITY_IMAGE_URL
-        )
-
-        # Backward-compatible single PoP (if both None later)
-        single_pop_url = config.RAIN_PROBABILITY_IMAGE_URL
-
-        pop12 = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            pop12_url,
-            (config.POP12_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
-        ) if pop12_url else None
-        pop6 = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            pop6_url,
-            (config.POP6_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
-        ) if pop6_url else None
-
-        pop_single = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            single_pop_url,
-            config.RAIN_PROBABILITY_CROP_BOX,
-        ) if single_pop_url and pop12 is None and pop6 is None else None
-        # Resolve AQI URL (static or dynamic)
-        aqi_resolved = await asyncio.to_thread(
+        aqi_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
         )
-        aqi_url = (config.AQI_IMAGE_URL or aqi_resolved)
-        aqi = await asyncio.to_thread(
-            image_analyzer.analyze_aqi_from_image,
-            aqi_url,
-            config.AQI_SAMPLE_BOX,
-        ) if aqi_url else None
 
-        # QPF per-county cache: compute for all configured counties
-        qpf_cache_by_county = {}
-        if pop12_url or pop6_url:
-            for county, sample_xy in (config.IMAGE_SAMPLE_COORDS or {}).items():
-                if not sample_xy:
-                    continue
-                q12 = await asyncio.to_thread(
-                    image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
-                ) if pop12_url else None
-                q6 = await asyncio.to_thread(
-                    image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
-                ) if pop6_url else None
-                qpf_cache_by_county[county] = {
-                    "qpf12_mm_per_hr": q12,
-                    "qpf6_mm_per_hr": q6,
-                }
-        CACHED_IMAGE_METRICS = {
-            "rain_probability_percent": pop_single,
-            "pop12_percent": pop12 if pop12 is not None else pop_single,
-            "pop6_percent": pop6 if pop6 is not None else pop_single,
-            "aqi_level": aqi,
-            # Not county-specific here; per-county QPF exposed via getter below
-            "qpf12_mm_per_hr": None,
-            "qpf6_mm_per_hr": None,
-        }
-        # Store per-county QPF cache on module (simple global)
-        global QPF_CACHE_BY_COUNTY
-        QPF_CACHE_BY_COUNTY = qpf_cache_by_county
+        # --- Consolidated Image Metric Analysis ---
+        image_metrics = {}
+        if not (config.IMAGE_SAMPLE_COORDS):
+             print("Warning: IMAGE_SAMPLE_COORDS not configured in config.py. Skipping image analysis.")
+             return
+
+        for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+            if not sample_xy:
+                continue
+
+            # Analyze QPF (Rainfall Intensity)
+            qpf12 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
+            ) if qpf12_url else None
+            qpf6 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
+            ) if qpf6_url else None
+
+            # Analyze AQI
+            aqi_level = None
+            if aqi_url:
+                box_size = 10
+                x, y = sample_xy
+                sample_box = (x - box_size // 2, y - box_size // 2, x + box_size // 2, y + box_size // 2)
+                aqi_level = await asyncio.to_thread(
+                    image_analyzer.analyze_aqi_from_image, aqi_url, sample_box
+                )
+
+            image_metrics[county] = {
+                "qpf12_mm_per_hr": qpf12,
+                "qpf6_mm_per_hr": qpf6,
+                "aqi_level": aqi_level,
+            }
+        
+        # Update the single, consolidated cache for image metrics
+        CACHED_IMAGE_METRICS.clear()
+        CACHED_IMAGE_METRICS.update(image_metrics)
+        
+        # Deprecated caches are no longer updated
+        # CACHED_WEATHER_DATA.update({ 'qpf_data': {}, 'aqi_data': {} })
+        # global QPF_CACHE_BY_COUNTY; QPF_CACHE_BY_COUNTY = {}
+
+        print(f"Image analysis complete. Metrics cached for {len(image_metrics)} counties.")
+
     except Exception as e:
         print(f"Error analyzing images: {e}")
-    
-    if CACHED_CWA_TOWNSHIP_DATA:
-        # --- Rebuild township map ---
-        new_township_map = {}
-        try:
-            records = CACHED_CWA_TOWNSHIP_DATA.get('records', {})
-            locations = records.get('Locations', [])
-            
-            if isinstance(locations, list) and locations:
-                # 獲取主要的位置組
-                main_location = locations[0]
-                if isinstance(main_location, dict):
-                    # 取得所有縣市
-                    counties = main_location.get('Location', [])
-                    print(f"Found {len(counties)} counties/cities")
-                    
-                    for county in counties:
-                        if isinstance(county, dict):
-                            county_name = county.get('LocationName')
-                            weather_elements = county.get('WeatherElement', [])
-                            
-                            print(f"Processing {county_name}")
-                            
-                            # 為每個縣市創建基本天氣資料結構
-                            for element in weather_elements:
-                                element_name = element.get('ElementName')
-                                time_array = element.get('Time', [])
-                                if time_array:
-                                    first_time = time_array[0]
-                                    element_values = first_time.get('ElementValue', [])
-                                    if element_values:
-                                        value = element_values[0].get('value')
-                                        # 根據縣市名稱和行政區建立完整地名
-                                        if county_name:
-                                            full_name = county_name
-                                            new_township_map[_normalize_name(full_name)] = county
-            
-            print(f"Building township map: found {len(new_township_map)} townships")
-            CACHED_TOWNSHIP_MAP = new_township_map
-            
-            if not CACHED_TOWNSHIP_MAP:
-                print("Warning: Township map was built but is empty. Check CWA data structure again.")
-            else:
-                print(f"Successfully built township map with {len(CACHED_TOWNSHIP_MAP)} entries.")
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Error building township map due to unexpected data structure: {e}")
 
+    if CACHED_CWA_TOWNSHIP_DATA:
         print("Scheduled job finished. CWA data has been cached.")
         # After fetching data, generate the final JSON output
         global CACHED_FINAL_JSON
@@ -2036,17 +2010,13 @@ def get_last_update_time():
     """獲取資料最後更新時間"""
     return CACHED_WEATHER_DATA['update_time']
 
-# Per-county QPF getters
-QPF_CACHE_BY_COUNTY = {}
-def get_qpf_for_county(county_name: str):
-    return QPF_CACHE_BY_COUNTY.get(county_name)
 ==================== FILE: scheduler\__init__.py ====================
 
 
 ==================== FILE: services\discord_sender.py ====================
 
 import requests
-from server import config
+import config
 
 def send_to_discord(message: str):
     """
@@ -2072,7 +2042,7 @@ def send_to_discord(message: str):
 
 import firebase_admin
 from firebase_admin import credentials, messaging
-from .. import config
+import config
 
 # Initialize Firebase Admin SDK
 try:

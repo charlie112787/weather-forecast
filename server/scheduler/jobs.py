@@ -38,25 +38,22 @@ def _normalize_name(name: str) -> str:
     # Normalize common variants and whitespace
     return name.replace("台", "臺").replace(" ", "").strip()
 
-def _iter_all_locations(records: object):
-    """
-    Iterates through the standardized locations structure from get_cwa_township_forecast_data.
-    """
-    if not isinstance(records, dict):
-        return
-    
-    locations_data = records.get('locations', [])
-    for location_group in locations_data:
-        if isinstance(location_group, dict):
-            for location in location_group.get('location', []):
-                yield location
-
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
     if county_data is None:
         # 如果沒有提供縣市資料，則獲取它
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
-    
+
+    # --- DEBUGGING: Inspect raw county_data ---
+    if county_data and isinstance(county_data, dict):
+        print(f"Debug: county_data keys: {county_data.keys()}")
+        records = county_data.get('records', {})
+        locations = records.get('location', [])
+        print(f"Debug: Found {len(locations)} locations in county_data.")
+    else:
+        print("Debug: county_data is None or not a dict.")
+    # --- END DEBUGGING ---
+
     # 獲取所有縣市的鄉鎮級資料
     township_data_tasks = []
     for city in data_fetcher.CWA_TOWNSHIP_CODES.keys():
@@ -68,20 +65,34 @@ async def _fetch_weather_data(county_data=None):
     township_data_results = await asyncio.gather(*township_data_tasks)
     
     # 合併所有鄉鎮資料
+    print(f"Debug: Merging {len(township_data_results)} results from township API calls.")
+    all_locations = []
+    for i, result in enumerate(township_data_results):
+        if result and isinstance(result, dict) and result.get('records') and isinstance(result['records'], dict) and result['records'].get('location'):
+            all_locations.extend(result['records']['location'])
+        else:
+            # Log the unexpected structure
+            print(f"Debug: Result {i} has an unexpected structure.")
+            if result and isinstance(result, dict):
+                print(f"Debug: Result {i} keys: {result.keys()}")
+                if 'records' in result and isinstance(result['records'], dict):
+                    print(f"Debug: Result {i}['records'] keys: {result['records'].keys()}")
+            else:
+                print(f"Debug: Result {i} is not a valid dictionary: {result}")
+
+    print(f"Debug: Total locations collected after merge: {len(all_locations)}")
     all_township_data = {
         'records': {
-            'locations': []
+            'location': all_locations
         }
     }
-    for data in township_data_results:
-        if data and 'records' in data and 'locations' in data['records']:
-            all_township_data['records']['locations'].extend(data['records']['locations'])
     
     # 處理縣市資料
     county_weather = {}
     if county_data and 'records' in county_data:
         for location in county_data['records'].get('location', []):
             county_name = location.get('locationName')
+            print(f"Debug: Processing county: {county_name}")
             if county_name:
                 weather_elements = {}
                 for element in location.get('weatherElement', []):
@@ -98,22 +109,12 @@ async def _fetch_weather_data(county_data=None):
     
     # 處理鄉鎮資料
     township_weather = {}
-    if all_township_data and 'records' in all_township_data:
-        for location in _iter_all_locations(all_township_data['records']):
+    if all_township_data and all_township_data.get('records') and all_township_data['records'].get('location'):
+        for location in all_township_data['records']['location']:
             township_name = location.get('locationName')
             if township_name:
-                weather_elements = {}
-                for element in location.get('weatherElement', []):
-                    name = element.get('elementName')
-                    if name and element.get('time'):
-                        values = element['time'][0].get('elementValue', [])
-                        if values:
-                            weather_elements[name] = values[0].get('value')
-                
-                township_weather[township_name] = {
-                    'pop6h': weather_elements.get('6小時降雨機率'),
-                    'pop12h': weather_elements.get('12小時降雨機率')
-                }
+                # Store the entire location object, as this is what calculation.py expects
+                township_weather[_normalize_name(township_name)] = location
     
     return county_weather, township_weather, all_township_data
 
@@ -214,6 +215,7 @@ async def fetch_data_job():
         # After fetching data, generate the final JSON output
         global CACHED_FINAL_JSON
         CACHED_FINAL_JSON = json_generator.generate_json_output()
+        print(f"Debug: township_weather map contains {len(township_weather)} entries.")
         # After fetching data, check if any notifications need to be sent.
         await check_and_send_notifications()
     else:

@@ -7,3 +7,11 @@ const firebaseConfig = {
   appId: "1:898186924731:web:9bc4884ba3ca070b598f9e",
   measurementId: "G-KS86ZBCF1K"
 };
+
+// 初始化 Firebase App (使用相容性 SDK 的全域 firebase 物件)
+firebase.initializeApp(firebaseConfig);
+console.log('Firebase App initialized:', firebase.app());
+
+// 初始化 Firestore (使用相容性 SDK 的全域 firebase 物件)
+export const db = firebase.firestore();
+console.log('Firestore DB initialized:', db);

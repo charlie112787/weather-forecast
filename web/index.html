@@ -4,8 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   
-  <!-- ✅ 修正 favicon 標籤 -->
-  <link rel="icon" type="image/png" href="../web/image/TWA-LOGO.png">
+  <link rel="icon" type="image/png" href="image/image/TWA-LOGO.png">
 
   <title>Taiwan Weather Alert</title>
 
@@ -13,7 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
 
 
-  <link rel="stylesheet" href="../web/css/style.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 
 <body>
@@ -76,6 +75,20 @@
 
       <!-- ====== 右側資訊 ====== -->
       <aside class="right-grid">
+        <div class="card">
+          <h3>使用者設定</h3>
+          <div style="margin-top: 16px;">
+            <label for="county-select" style="font-size: 14px; color: var(--muted);">縣市</label>
+            <select id="county-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+
+            <label for="township-select" style="font-size: 14px; color: var(--muted); margin-top: 12px; display: block;">鄉鎮</label>
+            <select id="township-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+
+            <button id="save-settings-btn" class="btn settings-save-btn">儲存設定</button>
+            <p id="settings-status" style="font-size: 13px; color: var(--accent-2); text-align: center; margin-top: 10px; height: 15px;"></p>
+          </div>
+        </div>
+
         <div class="card chart-box" id="chartCard">
           <canvas id="tempChart" width="600" height="220"></canvas>
         </div>
@@ -94,6 +107,14 @@
     <footer>© 2025 Taiwan Weather Alert</footer>
   </div>
 
-  <script src="app.js"></script>
+  <!-- Firebase SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-messaging.js"></script>
+
+  <!-- Your Scripts -->
+  <script src="js/firebase.js" type="module"></script>
+  <script src="js/main.js" type="module"></script>
 </body>
 </html>

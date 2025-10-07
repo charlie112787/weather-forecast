@@ -98,6 +98,25 @@ footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
   .icon-svg{width:48px;height:48px}
 }
 
+.settings-save-btn {
+  width: 100%;
+  margin-top: 12px;
+  background-color: var(--accent);
+  color: #fff;
+  border: none;
+  outline: none;
+  border-radius: 12px; /* 保持與輸入框一致的圓角 */
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.settings-save-btn:hover {
+  background-color: var(--accent-2); /* 懸停效果 */
+}
+
 .info-bar {
   width: 100%;
   background: rgba(0,0,0,0.6); /* 半透明黑底 */
@@ -118,8 +137,6 @@ footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
 .info-bar span {
   white-space: nowrap;
 }
-
 body {
   padding-top: 80px; /* 預留頂部空間給 info-bar */
 }
-

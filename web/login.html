@@ -1,92 +1,34 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  
-  <!-- ✅ 修正 favicon 標籤 -->
-  <link rel="icon" type="image/png" href="../web/image/TWA-LOGO.png">
-
-  <title>Taiwan Weather Alert</title>
-
-  <link rel="preconnect" href="https://fonts.gstatic.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-
-
-  <link rel="stylesheet" href="../web/css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登入 - Taiwan Weather Alert</title>
+    <link rel="stylesheet" href="./css/style-login.css">
+    <link rel="icon" type="image/png" href="./image/image/TWA-LOGO.png">
 </head>
-
 <body>
-  <div class="container">
-    <!-- ====== HEADER ====== -->
-    <header>
-    <div class="container">
-     <header>
-      <div class="brand">
-        <div class="logo">W</div>
-        <div>
-          <h1>天氣預報</h1>
-          <p>當天天氣資訊</p>
-        </div>
-      </div>
+    <div class="wrapper">
+        <form id="auth-form">
+            <h1>Weather Alert</h1>
+            <p>請使用您的 Google 帳號登入</p>
 
-      <div class="search">
-        <input id="cityInput" placeholder="輸入城市（例如：Taipei）" />
-        <button id="searchBtn">查詢</button>
-      </div>
-    </header>
+            <div id="error-message"></div>
 
-    <!-- ====== MAIN ====== -->
-    <main>
-      <section class="card current" id="leftColumn">
-        <div class="top-row">
-          <div>
-            <div class="meta" id="location">臺北市 · 現在</div>
-            <div class="temp" id="temperature">--°C</div>
-            <div class="meta" id="condition">晴時多雲</div>
-          </div>
+            <button type="button" id="google-login-btn" class="google-btn">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google logo">
+                使用 Google 登入
+            </button>
+        </form>
+    </div>
 
-          <div class="icon-wrap" id="weatherIcon">
-            <svg width="72" height="72" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 14C5 14 4 13 4 12C4 10 6 9 8 9C9 9 10 9 11 8C12 7 14 7 15 8C16 9 17 10 18 10C20 10 22 11 22 13C22 15 20 17 18 17H7"
-                    stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-        </div>
+    <!-- Firebase SDK (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
 
-        <div class="details">
-          <div class="badge">溫度感：<span id="feels">--°C</span></div>
-          <div class="badge">濕度：<span id="humidity">--%</span></div>
-          <div class="badge">風速：<span id="wind">-- m/s</span></div>
-          <div class="badge">氣壓：<span id="pressure">-- hPa</span></div>
-        </div>
-
-        <div>
-          <h3>未來 7 天</h3>
-          <div class="forecast" id="forecastList"></div>
-        </div>
-      </section>
-
-      <!-- ====== 右側資訊 ====== -->
-      <aside class="right-grid">
-        <div class="card chart-box" id="chartCard">
-          <canvas id="tempChart" width="600" height="220"></canvas>
-        </div>
-
-        <div class="card">
-          <h3>介面說明（給設計師）</h3>
-          <ul style="color:var(--muted);line-height:1.6">
-            <li>背景為可更換漸層或圖片，修改 style.css 中 body 部分。</li>
-            <li>Icon 建議使用 SVG，可加動畫或濾鏡效果。</li>
-            <li>天氣卡片可依天氣狀況切換底圖。</li>
-          </ul>
-        </div>
-      </aside>
-    </main>
-
-    <footer>© 2025 Taiwan Weather Alert</footer>
-  </div>
-
-  <script src="app.js"></script>
+    <!-- Your Scripts -->
+    <script src="js/firebase.js" type="module"></script>
+    <script src="js/auth.js" type="module"></script>
 </body>
 </html>

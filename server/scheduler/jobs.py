@@ -174,10 +174,10 @@ async def fetch_data_job():
                 continue
 
             # Analyze QPF (Rainfall Intensity)
-            qpf12 = await asyncio.to_thread(
+            qpf12_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
             ) if qpf12_url else None
-            qpf6 = await asyncio.to_thread(
+            qpf6_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
             ) if qpf6_url else None
 
@@ -192,11 +192,76 @@ async def fetch_data_job():
                 )
 
             image_metrics[county] = {
-                "qpf12_mm_per_hr": qpf12,
-                "qpf6_mm_per_hr": qpf6,
+                "qpf12_max_mm_per_hr": qpf12_data.get("max") if qpf12_data else None,
+                "qpf12_min_mm_per_hr": qpf12_data.get("min") if qpf12_data else None,
+                "qpf6_max_mm_per_hr": qpf6_data.get("max") if qpf6_data else None,
+                "qpf6_min_mm_per_hr": qpf6_data.get("min") if qpf6_data else None,
                 "aqi_level": aqi_level,
             }
         
+        # --- NCDR Daily Rain Analysis ---
+        try:
+            print("Starting NCDR daily rain analysis...")
+            daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
+            if daily_rain_url and image_url_resolver._is_image_url(daily_rain_url):
+                # Analyze this single image for all counties
+                daily_rain_tasks = {}
+                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+                    if sample_xy:
+                        daily_rain_tasks[county] = asyncio.to_thread(
+                            image_analyzer.analyze_ncdr_rain_from_image, daily_rain_url, sample_xy
+                        )
+                
+                daily_rain_results = await asyncio.gather(*daily_rain_tasks.values())
+                county_results = dict(zip(daily_rain_tasks.keys(), daily_rain_results))
+
+                # Store the results
+                for county, data in county_results.items():
+                    if county in image_metrics and data:
+                        image_metrics[county]['ncdr_daily_rain'] = data
+            else:
+                print("Could not resolve or validate NCDR daily rain URL. Skipping.")
+        except Exception as e:
+            print(f"Error during NCDR daily rain analysis: {e}")
+
+        # --- NCDR Nowcast Analysis ---
+        try:
+            print("Starting NCDR nowcast analysis...")
+            # 1. Find the latest nowcast series
+            latest_f01h_url = await asyncio.to_thread(
+                image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN
+            )
+
+            if latest_f01h_url:
+                print(f"Found latest NCDR nowcast series: {latest_f01h_url}")
+                # 2. Generate all 12 URLs for the series
+                base_url = latest_f01h_url.rsplit('_', 1)[0]
+                nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
+
+                # 3. Analyze all 12 images for each county
+                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+                    if not sample_xy:
+                        continue
+                    
+                    nowcast_tasks = []
+                    for url in nowcast_urls:
+                        nowcast_tasks.append(
+                            asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy)
+                        )
+                    
+                    hourly_forecasts = await asyncio.gather(*nowcast_tasks)
+
+                    # 4. Store the 12-hour forecast data
+                    if county in image_metrics:
+                        image_metrics[county]['ncdr_nowcast'] = [
+                            {"hour": i + 1, **(data or {})}
+                            for i, data in enumerate(hourly_forecasts)
+                        ]
+            else:
+                print("Could not resolve NCDR nowcast URL. Skipping.")
+        except Exception as e:
+            print(f"Error during NCDR nowcast analysis: {e}")
+
         # Update the single, consolidated cache for image metrics
         CACHED_IMAGE_METRICS.clear()
         CACHED_IMAGE_METRICS.update(image_metrics)
@@ -216,6 +281,47 @@ async def fetch_data_job():
         global CACHED_FINAL_JSON
         CACHED_FINAL_JSON = json_generator.generate_json_output()
         print(f"Debug: township_weather map contains {len(township_weather)} entries.")
+        # --- Final Step: Generate Unified JSON and Upload to Firebase ---
+        print("Proceeding to generate and upload unified JSON file.")
+        unified_data = json_generator.generate_unified_json()
+        
+        if unified_data:
+            import json
+            import os
+            from services import firebase_uploader
+
+            # Define file paths
+            temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
+            destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
+
+            # Save data to local file
+            try:
+                with open(local_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(unified_data, f, ensure_ascii=False, indent=4)
+                print(f"Successfully saved unified data to {local_file_path}")
+
+                # Upload to Firebase
+                if os.getenv('FIREBASE_STORAGE_BUCKET'):
+                    upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
+                    if upload_url:
+                        print("Firebase upload successful.")
+                    else:
+                        print("Firebase upload failed.")
+                else:
+                    print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
+
+            except Exception as e:
+                print(f"Error during file generation or upload: {e}")
+            finally:
+                # Clean up local file
+                if os.path.exists(local_file_path):
+                    os.remove(local_file_path)
+                    print(f"Cleaned up temporary file: {local_file_path}")
+        else:
+            print("Unified JSON generation failed, skipping file creation and upload.")
+
         # After fetching data, check if any notifications need to be sent.
         await check_and_send_notifications()
     else:
@@ -252,7 +358,7 @@ async def check_and_send_notifications():
                 # )
 
 # Schedule the data fetching job to run twice daily at 06:00 and 12:00
-scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=0)
+scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=20)
 
 # --- Getter functions for API endpoints to access cached data ---
 def get_cached_weather_data():

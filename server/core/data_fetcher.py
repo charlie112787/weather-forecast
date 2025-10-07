@@ -94,9 +94,12 @@ def get_cwa_township_forecast_data(city: str = None):
             records = data.get('records', {})
             # The F-D0047-XXX responses have a nested structure: records -> locations (list of groups) -> location (list of towns)
             if 'locations' in records:
-                for location_group in records['locations']:
-                    if location_group.get('location'):
-                        all_locations.extend(location_group['location'])
+                for i, location_group in enumerate(records['locations']):
+                    print(f"Debug: Processing location_group {i}, type: {type(location_group)}")
+                    if isinstance(location_group, dict):
+                        print(f"Debug: location_group {i} keys: {location_group.keys()}")
+                        if location_group.get('location'):
+                            all_locations.extend(location_group['location'])
             # Fallback for a flatter structure, just in case
             elif 'location' in records:
                 all_locations.extend(records['location'])

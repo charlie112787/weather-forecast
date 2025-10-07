@@ -43,6 +43,9 @@ POP12_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_12_%Y%m%d%H.png"]
 POP6_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_06_%Y%m%d%H.png"]   # type: ignore[var-annotated]
 AQI_URL_PATTERNS = ["https://airtw.epa.gov.tw/EnvStatus/map_static_img/AQI_Day.png"]    # type: ignore[var-annotated]
 
+# NCDR Nowcast URL pattern (checks for the first hour image to find the series)
+NCDR_NOWCAST_URL_PATTERN = ["https://watch.ncdr.nat.gov.tw/00_Wxmap/7F17_NCDRQPF_12H/%Y%m/%Y%m%d/%Y%m%d%H/%Y%m%d%H_f01h.gif"]
+
 # Crop/sample boxes (left,upper,right,lower). Set to None or a 4-tuple.
 RAIN_PROBABILITY_CROP_BOX = None
 AQI_SAMPLE_BOX = None
@@ -128,6 +131,11 @@ IMAGE_SAMPLE_COORDS = {
     "金門縣": (50, 300),
     "連江縣": (30, 100), # 馬祖
 }
+
+# --- NCDR Nowcast Color Map (Placeholder) ---
+# This is a placeholder copied from QPF_COLOR_MAP. 
+# Calibrate these values to match the legend of the NCDR nowcast images.
+NCDR_NOWCAST_COLOR_MAP = QPF_COLOR_MAP.copy()
 ==================== FILE: get_weather.py ====================
 
 import sys
@@ -386,9 +394,13 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
             "county": decoded_county_name,
             "temperature": elements.get("T"),
             "weather_description": elements.get("Wx"),
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
+            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
         }
         logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
         return resp
@@ -476,9 +488,13 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
 
         response = {
             **forecast,
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
+            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
         }
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
@@ -544,8 +560,8 @@ async def notify_township(township_name: str):
             f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
             f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
             f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
-            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_mm_per_hr')}\n"
-            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_mm_per_hr')}\n"
+            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_min_mm_per_hr')} - {image_metrics.get('qpf12_max_mm_per_hr')}\n"
+            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_min_mm_per_hr')} - {image_metrics.get('qpf6_max_mm_per_hr')}\n"
             f"AQI 等級(縣): {image_metrics.get('aqi_level')}\n"
         )
 
@@ -1310,69 +1326,78 @@ def get_cwa_township_forecast_data(city: str = None):
     """
     Fetches 36-hour weather forecast data for townships.
     Args:
-        city: Optional city name. If provided, fetches data for that city only.
-              If None, fetches data for all cities.
+        city: The city name to fetch data for.
     """
     session = create_session()
-    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
-    
-    if city:
-        dataset_id = CWA_TOWNSHIP_CODES.get(city)
-        if not dataset_id:
-            print(f"Invalid city name: {city}")
-            return None
-        urls = [(city, f"{CWA_API_URL}{dataset_id}")]
-    else:
-        # 如果沒有指定城市，獲取所有城市的資料
-        urls = [(city, f"{CWA_API_URL}{code}") for city, code in CWA_TOWNSHIP_CODES.items()]
-
-    all_data = []
-    for city_name, url in urls:
-        try:
-            print(f"Fetching CWA township forecast data for {city_name or 'all cities'}...")
-            response = session.get(
-                url, 
-                params={"Authorization": config.CWA_API_KEY},
-                verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data and 'records' in data:
-                if 'location' in data['records']:
-                    # 對應單一縣市的鄉鎮資料
-                    all_data.append({
-                        'locations': [{
-                            'location': data['records']['location']
-                        }]
-                    })
-                elif 'locations' in data['records']:
-                    # 對應多縣市的鄉鎮資料
-                    all_data.append(data['records'])
-            print(f"Successfully fetched CWA data for {city_name or 'all cities'}.")
-        except requests.exceptions.SSLError as e:
-            print(f"SSL error fetching CWA township data for {city_name}: {e}")
-            if getattr(config, "ALLOW_INSECURE_FALLBACK", False):
-                try:
-                    print(f"Retrying CWA township request for {city_name} with verify=False...")
-                    response = requests.get(url, params={"Authorization": config.CWA_API_KEY}, 
-                                         verify=False)
-                    response.raise_for_status()
-                    data = response.json()
-                    if data and 'records' in data:
-                        all_data.append(data['records'])
-                    print(f"Successfully fetched CWA data for {city_name} (insecure fallback).")
-                except requests.exceptions.RequestException as e2:
-                    print(f"Fallback request failed for {city_name}: {e2}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching CWA township data for {city_name}: {e}")
-    
-    if not all_data:
+    dataset_id = CWA_TOWNSHIP_CODES.get(city)
+    if not dataset_id:
+        print(f"Invalid city name: {city}")
         return None
-    
-    # 合併所有數據
+
+    url = f"{CWA_API_URL}{dataset_id}"
+    all_locations = []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
+    }
+    params = {
+        "Authorization": config.CWA_API_KEY,
+        "elementName": "PoP12h,T,Wx,PoP6h"
+    }
+
+    try:
+        print(f"Fetching CWA township forecast data for {city}...")
+        response = session.get(
+            url, 
+            params=params,
+            headers=headers, # Add User-Agent header
+            verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
+        )
+        response.raise_for_status()
+        
+        # --- FINAL DEBUG: Print raw response text ---
+        print(f"--- Raw Response for {city} ---")
+        print(response.text)
+        print("--- End Raw Response ---")
+
+        import json
+
+        # Manually decode the response to avoid potential encoding issues with response.json()
+        try:
+            data_text = response.content.decode('utf-8')
+            data = json.loads(data_text)
+
+            records = data.get('records', {})
+            # The F-D0047-XXX responses have a nested structure: records -> locations (list of groups) -> location (list of towns)
+            if 'locations' in records:
+                for i, location_group in enumerate(records['locations']):
+                    print(f"Debug: Processing location_group {i}, type: {type(location_group)}")
+                    if isinstance(location_group, dict):
+                        print(f"Debug: location_group {i} keys: {location_group.keys()}")
+                        if location_group.get('location'):
+                            all_locations.extend(location_group['location'])
+            # Fallback for a flatter structure, just in case
+            elif 'location' in records:
+                all_locations.extend(records['location'])
+            
+            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations in this batch.")
+
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            print(f"CRITICAL: Failed to decode or parse JSON for {city}. Error: {e}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"CRITICAL: Error fetching CWA township data for {city}. Error: {e}")
+        return None # Fail fast
+
+    if not all_locations:
+        print(f"Warning: No locations found for {city} after successful fetch.")
+        return None
+
+    # Return the standard structure for this single city
     return {
         'records': {
-            'locations': all_data
+            'location': all_locations
         }
     }
 
@@ -1548,19 +1573,86 @@ def _closest_color(value: Tuple[int, int, int], palette: List[Tuple[int, int, in
     return best
 
 
-def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[float]:
+def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
     """
-    Estimate rainfall intensity (mm/hr) by sampling color at a given pixel and mapping via QPF_COLOR_MAP.
+    Estimate rainfall intensity (mm/hr) by analyzing a square region and returning the min and max QPF values.
     """
     from server import config
     image = _download_image(image_url)
-    x, y = sample_xy
-    if x < 0 or y < 0 or x >= image.width or y >= image.height:
+    x_center, y_center = sample_xy
+
+    box_size = 20
+    half_box = box_size // 2
+
+    # Define the bounding box for the area
+    left = max(0, x_center - half_box)
+    top = max(0, y_center - half_box)
+    right = min(image.width, x_center + half_box)
+    bottom = min(image.height, y_center + half_box)
+
+    if left >= right or top >= bottom:
         return None
-    rgb = image.getpixel((x, y))[:3] if hasattr(image.getpixel((x, y)), '__iter__') else image.getpixel((x, y))
+
+    qpf_values = []
     palette = list(config.QPF_COLOR_MAP.keys())
-    nearest = _closest_color(rgb, palette)
-    return config.QPF_COLOR_MAP.get(nearest)
+
+    # Iterate over all pixels in the bounding box
+    for y in range(top, bottom):
+        for x in range(left, right):
+            rgb = image.getpixel((x, y))[:3]
+            nearest_color = _closest_color(rgb, palette)
+            qpf_value = config.QPF_COLOR_MAP.get(nearest_color)
+            # Exclude 0.0 values from min/max calculation unless it's the only value
+            if qpf_value is not None and qpf_value > 0:
+                qpf_values.append(qpf_value)
+
+    if not qpf_values:
+        # If no rain, return 0.0 for both min and max
+        return {"min": 0.0, "max": 0.0}
+
+    # Return the min and max QPF values found in the area
+    return {"min": min(qpf_values), "max": max(qpf_values)}
+
+def analyze_ncdr_rain_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
+    """
+    Estimate rainfall intensity (mm/hr) from NCDR images by analyzing a square region 
+    and returning the min and max QPF values.
+    """
+    from server import config
+    image = _download_image(image_url)
+    x_center, y_center = sample_xy
+
+    box_size = 20
+    half_box = box_size // 2
+
+    # Define the bounding box for the area
+    left = max(0, x_center - half_box)
+    top = max(0, y_center - half_box)
+    right = min(image.width, x_center + half_box)
+    bottom = min(image.height, y_center + half_box)
+
+    if left >= right or top >= bottom:
+        return None
+
+    qpf_values = []
+    palette = list(config.NCDR_NOWCAST_COLOR_MAP.keys())
+
+    # Iterate over all pixels in the bounding box
+    for y in range(top, bottom):
+        for x in range(left, right):
+            rgb = image.getpixel((x, y))[:3]
+            nearest_color = _closest_color(rgb, palette)
+            qpf_value = config.NCDR_NOWCAST_COLOR_MAP.get(nearest_color)
+            # Exclude 0.0 values from min/max calculation unless it's the only value
+            if qpf_value is not None and qpf_value > 0:
+                qpf_values.append(qpf_value)
+
+    if not qpf_values:
+        # If no rain, return 0.0 for both min and max
+        return {"min": 0.0, "max": 0.0}
+
+    # Return the min and max QPF values found in the area
+    return {"min": min(qpf_values), "max": max(qpf_values)}
 
 
 
@@ -1615,127 +1707,137 @@ def resolve_latest_url(patterns: List[str], now: Optional[datetime] = None, hour
     times = [base_time - timedelta(hours=h) for h in range(hours_back + 1)]
     return _try_patterns(patterns, times)
 
+def resolve_ncdr_daily_rain_url(now: Optional[datetime] = None) -> Optional[str]:
+    """
+    Constructs the specific NCDR daily rain forecast image URL based on the time of day.
+    - For the 06:20 run, it targets the 05:00 local time image.
+    - For the 12:20 run, it targets the 11:00 local time image.
+    """
+    if not now:
+        now = datetime.now() # Local time
+
+    target_hour_local = 0
+    f_hour_str = ""
+    
+    # Determine which run we are closer to
+    if 8 < now.hour < 18: # Noon run (12:20)
+        target_hour_local = 11
+        f_hour_str = "f09"
+    else: # Morning run (06:20) or other times
+        target_hour_local = 5
+        f_hour_str = "f15"
+
+    target_time_local = now.replace(hour=target_hour_local, minute=0, second=0, microsecond=0)
+    
+    # Convert local target time to UTC
+    # Taiwan is UTC+8
+    target_time_utc = target_time_local - timedelta(hours=8)
+
+    base_url = "https://watch.ncdr.nat.gov.tw/00_Wxmap/5F11_CWB_QPF_OFFICIAL"
+    year_month = target_time_utc.strftime("%Y%m")
+    timestamp = target_time_utc.strftime("%Y%m%d%H")
+
+    # Format: O01_{YYYYMMDDHH}_{fXX}_d12s.gif
+    url = f"{base_url}/{year_month}/O01_{timestamp}_{f_hour_str}_d12s.gif"
+    
+    print(f"Constructed NCDR daily rain URL: {url}")
+    return url
 
 
 ==================== FILE: core\json_generator.py ====================
 
-
 import datetime
 from scheduler import jobs
 from . import codes
+import json
 
-def generate_json_output():
+def generate_unified_json():
     """
-    Generates the final JSON output by combining CWA and AQI data.
+    Generates a single, unified JSON object containing all forecast data for every township in Taiwan.
+    This function is the single source of truth for creating the final data package.
     """
-    update_time = datetime.datetime.now().isoformat()
+    print("Starting generation of unified JSON for all townships...")
     
+    # 1. Get all cached data sources
+    update_time = datetime.datetime.now().isoformat()
     cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
     cwa_township_data = jobs.get_cached_weather_data().get('township_weather')
     image_metrics = jobs.CACHED_IMAGE_METRICS
-    
+
     if not cwa_county_data or not cwa_township_data:
+        print("Error: CWA data caches are not available. Cannot generate unified JSON.")
         return None
-        
-    final_json = {
+
+    final_data = {
         "update_time": update_time,
+        "towns": {}
     }
-    
-    # Helper to extract the first parameter name from a weather element
-    def get_weather_element(elements, element_name):
-        for element in elements:
-            if element.get('elementName') == element_name:
-                time_entry = element.get('time', [{}])[0]
-                parameter = time_entry.get('parameter', {})
-                return parameter.get('parameterName')
-        return None
 
-    # Helper to extract rain probability from township data
-    def get_town_rain_prob(town_weather_element, pop_element_name):
-        for element in town_weather_element:
-            if element.get('elementName') == pop_element_name:
-                time_entry = element.get('time', [{}])[0]
-                if 'elementValue' in time_entry:
-                    return time_entry['elementValue'][0].get('value')
-        return None
+    # 2. Iterate through every known township
+    for township_full_name, township_code in codes.TOWNSHIP_NAME_TO_CODE.items():
+        
+        # 3. For each township, find its data from all sources
+        county_name = codes.resolve_county_from_township_name(township_full_name)
+        
+        # Normalize names for cache lookups
+        normalized_town_name = codes.normalize_name(township_full_name)
+        normalized_county_name = codes.normalize_name(county_name)
 
-    # Process county data
-    for county in cwa_county_data.get('records', {}).get('location', []):
-        county_name = county.get('locationName')
-        county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
-        
-        if not county_code:
-            continue
-            
-        weather_elements = county.get('weatherElement', [])
-        
-        # Calculate average temperature
-        min_temp_str = get_weather_element(weather_elements, 'MinT')
-        max_temp_str = get_weather_element(weather_elements, 'MaxT')
-        
-        avg_temp = None
-        if min_temp_str and max_temp_str:
-            try:
-                avg_temp = (float(min_temp_str) + float(max_temp_str)) / 2
-            except (ValueError, TypeError):
-                avg_temp = None
+        # Get data from CWA caches
+        town_cwa = cwa_township_data.get(normalized_town_name)
+        county_cwa = cwa_county_data.get(normalized_county_name)
 
-        final_json[county_code] = {
-            "name": county_name,
-            "temp": avg_temp,
-            "weather": get_weather_element(weather_elements, 'Wx'),
-            "rain_6h": None, # Placeholder, will be populated from township data
-            "rain_12h": None, # Placeholder, will be populated from township data
-            "aqi": image_metrics.get('aqi_level') if image_metrics else None,
-            "towns": {}
+        # Get data from image analysis cache
+        county_image_metrics = image_metrics.get(county_name) or {}
+
+        # --- Start assembling the data for one township ---
+        
+        # From county-level CWA data
+        temperature = county_cwa.get('temperature') if county_cwa else None
+        
+        # From township-level CWA data
+        pop6h = None
+        pop12h = None
+        weather_description = None
+        if town_cwa and town_cwa.get('weatherElement'):
+            for element in town_cwa['weatherElement']:
+                element_name = element.get('elementName')
+                time_data = element.get('time', [{}])[0]
+                
+                if element_name == '6小時降雨機率':
+                    pop6h = time_data.get('elementValue', [{}])[0].get('value')
+                elif element_name == '12小時降雨機率':
+                    pop12h = time_data.get('elementValue', [{}])[0].get('value')
+                elif element_name == '天氣現象':
+                    weather_description = time_data.get('elementValue', [{}])[0].get('value')
+
+        # Assemble all data into a single object
+        township_data_object = {
+            "township_name": township_full_name,
+            "county_name": county_name,
+            "temperature": temperature,
+            "weather_description": weather_description,
+            "pop6h": pop6h,
+            "pop12h": pop12h,
+            "aqi_level": county_image_metrics.get("aqi_level"),
+            "cwa_qpf_6h_min": county_image_metrics.get("qpf6_min_mm_per_hr"),
+            "cwa_qpf_6h_max": county_image_metrics.get("qpf6_max_mm_per_hr"),
+            "cwa_qpf_12h_min": county_image_metrics.get("qpf12_min_mm_per_hr"),
+            "cwa_qpf_12h_max": county_image_metrics.get("qpf12_max_mm_per_hr"),
+            "ncdr_daily_rain_min": (county_image_metrics.get("ncdr_daily_rain") or {}).get("min"),
+            "ncdr_daily_rain_max": (county_image_metrics.get("ncdr_daily_rain") or {}).get("max"),
+            "ncdr_nowcast": county_image_metrics.get("ncdr_nowcast"),
         }
+        
+        final_data["towns"][township_code] = township_data_object
 
-    # Process township data
-    if cwa_township_data.get('records'):
-        locations = cwa_township_data['records'].get('locations', [])
-        for county_towns in locations:
-            county_name = county_towns.get('locationsName')
-            county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
+    print(f"Successfully generated unified JSON for {len(final_data['towns'])} townships.")
+    return final_data
 
-            if not county_code or county_code not in final_json:
-                continue
-
-            town_rain_6h = []
-            town_rain_12h = []
-
-            for town in county_towns.get('location', []):
-                town_name = town.get('locationName')
-                town_code = codes.TOWNSHIP_NAME_TO_CODE.get(f"{county_name}{town_name}")
-                
-                if not town_code:
-                    continue
-
-                weather_element = town.get('weatherElement', [])
-                rain_6h_str = get_town_rain_prob(weather_element, '6小時降雨機率')
-                rain_12h_str = get_town_rain_prob(weather_element, '12小時降雨機率')
-
-                rain_6h = int(rain_6h_str) if rain_6h_str and rain_6h_str.isdigit() else None
-                rain_12h = int(rain_12h_str) if rain_12h_str and rain_12h_str.isdigit() else None
-                
-                if rain_6h is not None:
-                    town_rain_6h.append(rain_6h)
-                
-                if rain_12h is not None:
-                    town_rain_12h.append(rain_12h)
-
-                final_json[county_code]['towns'][town_code] = {
-                    "rain_6h": rain_6h,
-                    "rain_12h": rain_12h,
-                }
-            
-            # Calculate average rain probability for the county
-            if town_rain_6h:
-                final_json[county_code]['rain_6h'] = sum(town_rain_6h) / len(town_rain_6h)
-            if town_rain_12h:
-                final_json[county_code]['rain_12h'] = sum(town_rain_12h) / len(town_rain_12h)
-
-    return final_json
-
+# This function is kept for compatibility with older parts of the code if needed,
+# but generate_unified_json is the new primary function.
+def generate_json_output():
+    return generate_unified_json()
 ==================== FILE: core\__init__.py ====================
 
 
@@ -1781,25 +1883,22 @@ def _normalize_name(name: str) -> str:
     # Normalize common variants and whitespace
     return name.replace("台", "臺").replace(" ", "").strip()
 
-def _iter_all_locations(records: object):
-    """
-    Iterates through the standardized locations structure from get_cwa_township_forecast_data.
-    """
-    if not isinstance(records, dict):
-        return
-    
-    locations_data = records.get('locations', [])
-    for location_group in locations_data:
-        if isinstance(location_group, dict):
-            for location in location_group.get('location', []):
-                yield location
-
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
     if county_data is None:
         # 如果沒有提供縣市資料，則獲取它
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
-    
+
+    # --- DEBUGGING: Inspect raw county_data ---
+    if county_data and isinstance(county_data, dict):
+        print(f"Debug: county_data keys: {county_data.keys()}")
+        records = county_data.get('records', {})
+        locations = records.get('location', [])
+        print(f"Debug: Found {len(locations)} locations in county_data.")
+    else:
+        print("Debug: county_data is None or not a dict.")
+    # --- END DEBUGGING ---
+
     # 獲取所有縣市的鄉鎮級資料
     township_data_tasks = []
     for city in data_fetcher.CWA_TOWNSHIP_CODES.keys():
@@ -1811,20 +1910,34 @@ async def _fetch_weather_data(county_data=None):
     township_data_results = await asyncio.gather(*township_data_tasks)
     
     # 合併所有鄉鎮資料
+    print(f"Debug: Merging {len(township_data_results)} results from township API calls.")
+    all_locations = []
+    for i, result in enumerate(township_data_results):
+        if result and isinstance(result, dict) and result.get('records') and isinstance(result['records'], dict) and result['records'].get('location'):
+            all_locations.extend(result['records']['location'])
+        else:
+            # Log the unexpected structure
+            print(f"Debug: Result {i} has an unexpected structure.")
+            if result and isinstance(result, dict):
+                print(f"Debug: Result {i} keys: {result.keys()}")
+                if 'records' in result and isinstance(result['records'], dict):
+                    print(f"Debug: Result {i}['records'] keys: {result['records'].keys()}")
+            else:
+                print(f"Debug: Result {i} is not a valid dictionary: {result}")
+
+    print(f"Debug: Total locations collected after merge: {len(all_locations)}")
     all_township_data = {
         'records': {
-            'locations': []
+            'location': all_locations
         }
     }
-    for data in township_data_results:
-        if data and 'records' in data and 'locations' in data['records']:
-            all_township_data['records']['locations'].extend(data['records']['locations'])
     
     # 處理縣市資料
     county_weather = {}
     if county_data and 'records' in county_data:
         for location in county_data['records'].get('location', []):
             county_name = location.get('locationName')
+            print(f"Debug: Processing county: {county_name}")
             if county_name:
                 weather_elements = {}
                 for element in location.get('weatherElement', []):
@@ -1841,8 +1954,8 @@ async def _fetch_weather_data(county_data=None):
     
     # 處理鄉鎮資料
     township_weather = {}
-    if all_township_data and 'records' in all_township_data:
-        for location in _iter_all_locations(all_township_data['records']):
+    if all_township_data and all_township_data.get('records') and all_township_data['records'].get('location'):
+        for location in all_township_data['records']['location']:
             township_name = location.get('locationName')
             if township_name:
                 # Store the entire location object, as this is what calculation.py expects
@@ -1906,10 +2019,10 @@ async def fetch_data_job():
                 continue
 
             # Analyze QPF (Rainfall Intensity)
-            qpf12 = await asyncio.to_thread(
+            qpf12_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
             ) if qpf12_url else None
-            qpf6 = await asyncio.to_thread(
+            qpf6_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
             ) if qpf6_url else None
 
@@ -1924,11 +2037,76 @@ async def fetch_data_job():
                 )
 
             image_metrics[county] = {
-                "qpf12_mm_per_hr": qpf12,
-                "qpf6_mm_per_hr": qpf6,
+                "qpf12_max_mm_per_hr": qpf12_data.get("max") if qpf12_data else None,
+                "qpf12_min_mm_per_hr": qpf12_data.get("min") if qpf12_data else None,
+                "qpf6_max_mm_per_hr": qpf6_data.get("max") if qpf6_data else None,
+                "qpf6_min_mm_per_hr": qpf6_data.get("min") if qpf6_data else None,
                 "aqi_level": aqi_level,
             }
         
+        # --- NCDR Daily Rain Analysis ---
+        try:
+            print("Starting NCDR daily rain analysis...")
+            daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
+            if daily_rain_url and image_url_resolver._is_image_url(daily_rain_url):
+                # Analyze this single image for all counties
+                daily_rain_tasks = {}
+                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+                    if sample_xy:
+                        daily_rain_tasks[county] = asyncio.to_thread(
+                            image_analyzer.analyze_ncdr_rain_from_image, daily_rain_url, sample_xy
+                        )
+                
+                daily_rain_results = await asyncio.gather(*daily_rain_tasks.values())
+                county_results = dict(zip(daily_rain_tasks.keys(), daily_rain_results))
+
+                # Store the results
+                for county, data in county_results.items():
+                    if county in image_metrics and data:
+                        image_metrics[county]['ncdr_daily_rain'] = data
+            else:
+                print("Could not resolve or validate NCDR daily rain URL. Skipping.")
+        except Exception as e:
+            print(f"Error during NCDR daily rain analysis: {e}")
+
+        # --- NCDR Nowcast Analysis ---
+        try:
+            print("Starting NCDR nowcast analysis...")
+            # 1. Find the latest nowcast series
+            latest_f01h_url = await asyncio.to_thread(
+                image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN
+            )
+
+            if latest_f01h_url:
+                print(f"Found latest NCDR nowcast series: {latest_f01h_url}")
+                # 2. Generate all 12 URLs for the series
+                base_url = latest_f01h_url.rsplit('_', 1)[0]
+                nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
+
+                # 3. Analyze all 12 images for each county
+                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+                    if not sample_xy:
+                        continue
+                    
+                    nowcast_tasks = []
+                    for url in nowcast_urls:
+                        nowcast_tasks.append(
+                            asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy)
+                        )
+                    
+                    hourly_forecasts = await asyncio.gather(*nowcast_tasks)
+
+                    # 4. Store the 12-hour forecast data
+                    if county in image_metrics:
+                        image_metrics[county]['ncdr_nowcast'] = [
+                            {"hour": i + 1, **(data or {})}
+                            for i, data in enumerate(hourly_forecasts)
+                        ]
+            else:
+                print("Could not resolve NCDR nowcast URL. Skipping.")
+        except Exception as e:
+            print(f"Error during NCDR nowcast analysis: {e}")
+
         # Update the single, consolidated cache for image metrics
         CACHED_IMAGE_METRICS.clear()
         CACHED_IMAGE_METRICS.update(image_metrics)
@@ -1947,6 +2125,48 @@ async def fetch_data_job():
         # After fetching data, generate the final JSON output
         global CACHED_FINAL_JSON
         CACHED_FINAL_JSON = json_generator.generate_json_output()
+        print(f"Debug: township_weather map contains {len(township_weather)} entries.")
+        # --- Final Step: Generate Unified JSON and Upload to Firebase ---
+        print("Proceeding to generate and upload unified JSON file.")
+        unified_data = json_generator.generate_unified_json()
+        
+        if unified_data:
+            import json
+            import os
+            from services import firebase_uploader
+
+            # Define file paths
+            temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
+            destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
+
+            # Save data to local file
+            try:
+                with open(local_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(unified_data, f, ensure_ascii=False, indent=4)
+                print(f"Successfully saved unified data to {local_file_path}")
+
+                # Upload to Firebase
+                if os.getenv('FIREBASE_STORAGE_BUCKET'):
+                    upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
+                    if upload_url:
+                        print("Firebase upload successful.")
+                    else:
+                        print("Firebase upload failed.")
+                else:
+                    print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
+
+            except Exception as e:
+                print(f"Error during file generation or upload: {e}")
+            finally:
+                # Clean up local file
+                if os.path.exists(local_file_path):
+                    os.remove(local_file_path)
+                    print(f"Cleaned up temporary file: {local_file_path}")
+        else:
+            print("Unified JSON generation failed, skipping file creation and upload.")
+
         # After fetching data, check if any notifications need to be sent.
         await check_and_send_notifications()
     else:
@@ -1983,7 +2203,7 @@ async def check_and_send_notifications():
                 # )
 
 # Schedule the data fetching job to run twice daily at 06:00 and 12:00
-scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=0)
+scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=20)
 
 # --- Getter functions for API endpoints to access cached data ---
 def get_cached_weather_data():
@@ -2074,6 +2294,69 @@ def send_notification(title: str, body: str, token: str):
         print('Successfully sent message:', response)
     except Exception as e:
         print('Error sending message:', e)
+
+==================== FILE: services\firebase_uploader.py ====================
+
+
+import firebase_admin
+from firebase_admin import credentials, storage
+import os
+
+def initialize_firebase():
+    """Initializes the Firebase Admin SDK if not already initialized."""
+    if not firebase_admin._apps:
+        try:
+            # Assuming serviceAccountKey.json is in the root of the server directory
+            cred_path = os.path.join(os.path.dirname(__file__), '..', 'serviceAccountKey.json')
+            
+            # Get the bucket name from environment variables
+            bucket_name = os.getenv('FIREBASE_STORAGE_BUCKET')
+            if not bucket_name:
+                print("Error: FIREBASE_STORAGE_BUCKET environment variable is not set.")
+                return False
+
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': bucket_name
+            })
+            print("Firebase Admin SDK initialized successfully.")
+            return True
+        except Exception as e:
+            print(f"Error initializing Firebase Admin SDK: {e}")
+            return False
+    return True
+
+def upload_file_to_storage(local_file_path: str, destination_blob_name: str) -> str:
+    """
+    Uploads a file to Firebase Storage and returns its public URL.
+
+    Args:
+        local_file_path: The path to the local file to upload.
+        destination_blob_name: The desired name of the file in the storage bucket.
+
+    Returns:
+        The public URL of the uploaded file, or an empty string if upload fails.
+    """
+    if not initialize_firebase():
+        return ""
+
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(destination_blob_name)
+
+        print(f"Uploading {local_file_path} to Firebase Storage as {destination_blob_name}...")
+        blob.upload_from_filename(local_file_path)
+
+        # Make the blob publicly viewable
+        blob.make_public()
+
+        public_url = blob.public_url
+        print(f"Successfully uploaded file. Public URL: {public_url}")
+        return public_url
+    except Exception as e:
+        print(f"Error uploading file to Firebase Storage: {e}")
+        return ""
+
 
 ==================== FILE: services\__init__.py ====================
 

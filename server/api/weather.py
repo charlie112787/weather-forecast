@@ -149,9 +149,13 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
             "county": decoded_county_name,
             "temperature": elements.get("T"),
             "weather_description": elements.get("Wx"),
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
+            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
         }
         logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
         return resp
@@ -239,9 +243,13 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
 
         response = {
             **forecast,
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
+            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
         }
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
@@ -307,8 +315,8 @@ async def notify_township(township_name: str):
             f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
             f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
             f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
-            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_mm_per_hr')}\n"
-            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_mm_per_hr')}\n"
+            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_min_mm_per_hr')} - {image_metrics.get('qpf12_max_mm_per_hr')}\n"
+            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_min_mm_per_hr')} - {image_metrics.get('qpf6_max_mm_per_hr')}\n"
             f"AQI 等級(縣): {image_metrics.get('aqi_level')}\n"
         )
 

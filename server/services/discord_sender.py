@@ -1,5 +1,5 @@
 import requests
-from server import config
+import config
 
 def send_to_discord(message: str):
     """

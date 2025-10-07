@@ -1,7 +1,7 @@
 
 import datetime
-from server.scheduler import jobs
-from server.core import codes
+from scheduler import jobs
+from . import codes
 
 def generate_json_output():
     """
@@ -9,9 +9,9 @@ def generate_json_output():
     """
     update_time = datetime.datetime.now().isoformat()
     
-    cwa_county_data = jobs.get_cached_cwa_county_data()
-    cwa_township_data = jobs.get_cached_cwa_township_data()
-    image_metrics = jobs.get_cached_image_metrics()
+    cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+    cwa_township_data = jobs.get_cached_weather_data().get('township_weather')
+    image_metrics = jobs.CACHED_IMAGE_METRICS
     
     if not cwa_county_data or not cwa_township_data:
         return None

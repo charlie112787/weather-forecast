@@ -1,9 +1,9 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from server.core import data_fetcher, calculation, json_generator
-from server.core import image_analyzer
-from server.core import image_url_resolver
-from server import config
-from server.services import fcm_sender, discord_sender
+from core import data_fetcher, calculation, json_generator
+from core import image_analyzer
+from core import image_url_resolver
+import config
+from services import fcm_sender, discord_sender
 import asyncio
 
 scheduler = AsyncIOScheduler()
@@ -39,72 +39,17 @@ def _normalize_name(name: str) -> str:
     return name.replace("台", "臺").replace(" ", "").strip()
 
 def _iter_all_locations(records: object):
-    # Yield all location dicts from various possible shapes
+    """
+    Iterates through the standardized locations structure from get_cwa_township_forecast_data.
+    """
     if not isinstance(records, dict):
         return
-    # Case 1: records.location is a list
-    loc_list = records.get('location') if isinstance(records, dict) else None
-    if isinstance(loc_list, list):
-        for loc in loc_list:
-            if isinstance(loc, dict):
-                yield loc
-    # Case 2: records.locations is a list of groups, each with group.location list
-    groups = records.get('locations') if isinstance(records, dict) else None
-    if isinstance(groups, list):
-        for group in groups:
-            if isinstance(group, dict):
-                for loc in group.get('location', []) if isinstance(group.get('location'), list) else []:
-                    if isinstance(loc, dict):
-                        # Some structures have an extra nested 'location' list under each county
-                        inner = loc.get('location')
-                        if isinstance(inner, list):
-                            for inner_loc in inner:
-                                if isinstance(inner_loc, dict):
-                                    yield inner_loc
-                        else:
-                            yield loc
-    # Case 3: records.locations is a dict with key 'location' list
-    if isinstance(groups, dict):
-        inner_locs = groups.get('location')
-        if isinstance(inner_locs, list):
-            for loc in inner_locs:
-                if isinstance(loc, dict):
-                    inner = loc.get('location')
-                    if isinstance(inner, list):
-                        for inner_loc in inner:
-                            if isinstance(inner_loc, dict):
-                                yield inner_loc
-                    else:
-                        yield loc
-    # Case 4: Capitalized structure: records['Locations']['Location'] list
-    cap_groups = records.get('Locations')
-    if isinstance(cap_groups, dict):
-        cap_inner = cap_groups.get('Location')
-        if isinstance(cap_inner, list):
-            for loc in cap_inner:
-                if isinstance(loc, dict):
-                    inner = loc.get('location') or loc.get('Location')
-                    if isinstance(inner, list):
-                        for inner_loc in inner:
-                            if isinstance(inner_loc, dict):
-                                yield inner_loc
-                    else:
-                        yield loc
-    if isinstance(cap_groups, list):
-        for group in cap_groups:
-            if isinstance(group, dict):
-                # group keys example: 'DatasetDescription', 'LocationsName', 'Dataid', 'Location'
-                cap_inner = group.get('Location')
-                if isinstance(cap_inner, list):
-                    for loc in cap_inner:
-                        if isinstance(loc, dict):
-                            inner = loc.get('location') or loc.get('Location')
-                            if isinstance(inner, list):
-                                for inner_loc in inner:
-                                    if isinstance(inner_loc, dict):
-                                        yield inner_loc
-                            else:
-                                yield loc
+    
+    locations_data = records.get('locations', [])
+    for location_group in locations_data:
+        if isinstance(location_group, dict):
+            for location in location_group.get('location', []):
+                yield location
 
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
@@ -154,30 +99,21 @@ async def _fetch_weather_data(county_data=None):
     # 處理鄉鎮資料
     township_weather = {}
     if all_township_data and 'records' in all_township_data:
-        for locations in all_township_data['records'].get('locations', []):
-            for location in locations.get('location', []):
-                township_name = location.get('locationName')
-                if township_name:
-                    # 從 locationName 取得縣市名稱和鄉鎮名稱
-                    parts = township_name.split('區') if '區' in township_name else township_name.split('鎮') if '鎮' in township_name else township_name.split('市') if '市' in township_name else [township_name]
-                    if len(parts) >= 2:
-                        county_name = parts[0]
-                        township_name = parts[1]
-                        full_name = f"{county_name}{township_name}"
-                    else:
-                        full_name = township_name
-                    weather_elements = {}
-                    for element in location.get('weatherElement', []):
-                        name = element.get('elementName')
-                        if name and element.get('time'):
-                            values = element['time'][0].get('elementValue', [])
-                            if values:
-                                weather_elements[name] = values[0].get('value')
-                    
-                    township_weather[full_name] = {
-                        'pop6h': weather_elements.get('6小時降雨機率'),
-                        'pop12h': weather_elements.get('12小時降雨機率')
-                    }
+        for location in _iter_all_locations(all_township_data['records']):
+            township_name = location.get('locationName')
+            if township_name:
+                weather_elements = {}
+                for element in location.get('weatherElement', []):
+                    name = element.get('elementName')
+                    if name and element.get('time'):
+                        values = element['time'][0].get('elementValue', [])
+                        if values:
+                            weather_elements[name] = values[0].get('value')
+                
+                township_weather[township_name] = {
+                    'pop6h': weather_elements.get('6小時降雨機率'),
+                    'pop12h': weather_elements.get('12小時降雨機率')
+                }
     
     return county_weather, township_weather, all_township_data
 
@@ -211,178 +147,69 @@ async def fetch_data_job():
         return
     
     # 分析圖片數據
-    pop12_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.POP12_URL_PATTERNS
-    )
-    pop6_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.POP6_URL_PATTERNS
-    )
-    
-    # 獲取降雨強度
-    qpf_data = {}
-    if pop12_url or pop6_url:
-        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
-            qpf12 = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image,
-                pop12_url,
-                coords
-            ) if pop12_url else None
-            
-            qpf6 = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image,
-                pop6_url,
-                coords
-            ) if pop6_url else None
-            
-            qpf_data[county_name] = {
-                'qpf12': qpf12,
-                'qpf6': qpf6
-            }
-    
-    # 獲取空氣品質數據
-    aqi_url = await asyncio.to_thread(
-        image_url_resolver.resolve_latest_url,
-        config.AQI_URL_PATTERNS
-    )
-    
-    aqi_data = {}
-    if aqi_url:
-        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
-            aqi = await asyncio.to_thread(
-                image_analyzer.analyze_aqi_from_image,
-                aqi_url,
-                coords
-            )
-            if aqi:
-                aqi_data[county_name] = aqi
-
-    # Image-derived metrics
     try:
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
-        # Resolve static or dynamic URLs for PoP12 / PoP6 (network I/O -> thread)
-        pop12_resolved = await asyncio.to_thread(
+
+        # Resolve image URLs
+        qpf12_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
         )
-        pop6_resolved = await asyncio.to_thread(
+        qpf6_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS
         )
-        pop12_url = (
-            config.POP12_IMAGE_URL or pop12_resolved or config.RAIN_PROBABILITY_IMAGE_URL
-        )
-        pop6_url = (
-            config.POP6_IMAGE_URL or pop6_resolved or config.RAIN_PROBABILITY_IMAGE_URL
-        )
-
-        # Backward-compatible single PoP (if both None later)
-        single_pop_url = config.RAIN_PROBABILITY_IMAGE_URL
-
-        pop12 = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            pop12_url,
-            (config.POP12_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
-        ) if pop12_url else None
-        pop6 = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            pop6_url,
-            (config.POP6_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
-        ) if pop6_url else None
-
-        pop_single = await asyncio.to_thread(
-            image_analyzer.extract_rain_probability_from_image,
-            single_pop_url,
-            config.RAIN_PROBABILITY_CROP_BOX,
-        ) if single_pop_url and pop12 is None and pop6 is None else None
-        # Resolve AQI URL (static or dynamic)
-        aqi_resolved = await asyncio.to_thread(
+        aqi_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
         )
-        aqi_url = (config.AQI_IMAGE_URL or aqi_resolved)
-        aqi = await asyncio.to_thread(
-            image_analyzer.analyze_aqi_from_image,
-            aqi_url,
-            config.AQI_SAMPLE_BOX,
-        ) if aqi_url else None
 
-        # QPF per-county cache: compute for all configured counties
-        qpf_cache_by_county = {}
-        if pop12_url or pop6_url:
-            for county, sample_xy in (config.IMAGE_SAMPLE_COORDS or {}).items():
-                if not sample_xy:
-                    continue
-                q12 = await asyncio.to_thread(
-                    image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
-                ) if pop12_url else None
-                q6 = await asyncio.to_thread(
-                    image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
-                ) if pop6_url else None
-                qpf_cache_by_county[county] = {
-                    "qpf12_mm_per_hr": q12,
-                    "qpf6_mm_per_hr": q6,
-                }
-        CACHED_IMAGE_METRICS = {
-            "rain_probability_percent": pop_single,
-            "pop12_percent": pop12 if pop12 is not None else pop_single,
-            "pop6_percent": pop6 if pop6 is not None else pop_single,
-            "aqi_level": aqi,
-            # Not county-specific here; per-county QPF exposed via getter below
-            "qpf12_mm_per_hr": None,
-            "qpf6_mm_per_hr": None,
-        }
-        # Store per-county QPF cache on module (simple global)
-        global QPF_CACHE_BY_COUNTY
-        QPF_CACHE_BY_COUNTY = qpf_cache_by_county
+        # --- Consolidated Image Metric Analysis ---
+        image_metrics = {}
+        if not (config.IMAGE_SAMPLE_COORDS):
+             print("Warning: IMAGE_SAMPLE_COORDS not configured in config.py. Skipping image analysis.")
+             return
+
+        for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
+            if not sample_xy:
+                continue
+
+            # Analyze QPF (Rainfall Intensity)
+            qpf12 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
+            ) if qpf12_url else None
+            qpf6 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
+            ) if qpf6_url else None
+
+            # Analyze AQI
+            aqi_level = None
+            if aqi_url:
+                box_size = 10
+                x, y = sample_xy
+                sample_box = (x - box_size // 2, y - box_size // 2, x + box_size // 2, y + box_size // 2)
+                aqi_level = await asyncio.to_thread(
+                    image_analyzer.analyze_aqi_from_image, aqi_url, sample_box
+                )
+
+            image_metrics[county] = {
+                "qpf12_mm_per_hr": qpf12,
+                "qpf6_mm_per_hr": qpf6,
+                "aqi_level": aqi_level,
+            }
+        
+        # Update the single, consolidated cache for image metrics
+        CACHED_IMAGE_METRICS.clear()
+        CACHED_IMAGE_METRICS.update(image_metrics)
+        
+        # Deprecated caches are no longer updated
+        # CACHED_WEATHER_DATA.update({ 'qpf_data': {}, 'aqi_data': {} })
+        # global QPF_CACHE_BY_COUNTY; QPF_CACHE_BY_COUNTY = {}
+
+        print(f"Image analysis complete. Metrics cached for {len(image_metrics)} counties.")
+
     except Exception as e:
         print(f"Error analyzing images: {e}")
-    
-    if CACHED_CWA_TOWNSHIP_DATA:
-        # --- Rebuild township map ---
-        new_township_map = {}
-        try:
-            records = CACHED_CWA_TOWNSHIP_DATA.get('records', {})
-            locations = records.get('Locations', [])
-            
-            if isinstance(locations, list) and locations:
-                # 獲取主要的位置組
-                main_location = locations[0]
-                if isinstance(main_location, dict):
-                    # 取得所有縣市
-                    counties = main_location.get('Location', [])
-                    print(f"Found {len(counties)} counties/cities")
-                    
-                    for county in counties:
-                        if isinstance(county, dict):
-                            county_name = county.get('LocationName')
-                            weather_elements = county.get('WeatherElement', [])
-                            
-                            print(f"Processing {county_name}")
-                            
-                            # 為每個縣市創建基本天氣資料結構
-                            for element in weather_elements:
-                                element_name = element.get('ElementName')
-                                time_array = element.get('Time', [])
-                                if time_array:
-                                    first_time = time_array[0]
-                                    element_values = first_time.get('ElementValue', [])
-                                    if element_values:
-                                        value = element_values[0].get('value')
-                                        # 根據縣市名稱和行政區建立完整地名
-                                        if county_name:
-                                            full_name = county_name
-                                            new_township_map[_normalize_name(full_name)] = county
-            
-            print(f"Building township map: found {len(new_township_map)} townships")
-            CACHED_TOWNSHIP_MAP = new_township_map
-            
-            if not CACHED_TOWNSHIP_MAP:
-                print("Warning: Township map was built but is empty. Check CWA data structure again.")
-            else:
-                print(f"Successfully built township map with {len(CACHED_TOWNSHIP_MAP)} entries.")
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Error building township map due to unexpected data structure: {e}")
 
+    if CACHED_CWA_TOWNSHIP_DATA:
         print("Scheduled job finished. CWA data has been cached.")
         # After fetching data, generate the final JSON output
         global CACHED_FINAL_JSON
@@ -449,8 +276,3 @@ def get_aqi_data(county_name: str):
 def get_last_update_time():
     """獲取資料最後更新時間"""
     return CACHED_WEATHER_DATA['update_time']
-
-# Per-county QPF getters
-QPF_CACHE_BY_COUNTY = {}
-def get_qpf_for_county(county_name: str):
-    return QPF_CACHE_BY_COUNTY.get(county_name)

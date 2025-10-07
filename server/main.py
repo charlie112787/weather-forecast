@@ -1,20 +1,16 @@
 import sys
 import os
+
+# Add the project root to the Python path to resolve module import issues
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import uvicorn
 from fastapi import FastAPI
 from dotenv import load_dotenv
-
-# --- Add project root to Python path ---
-# Ensure the repository root is on sys.path so 'server.*' imports work consistently
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-# --- End of path modification ---
-
-from server.api.weather import router as weather_router
+from api.weather import router as weather_router
 import asyncio
-from server.scheduler import jobs
-from server.scheduler.jobs import scheduler
+from scheduler import jobs
+from scheduler.jobs import scheduler
 
 load_dotenv()
 
@@ -46,5 +42,4 @@ async def root():
 app.include_router(weather_router, prefix="/api/weather")
 
 if __name__ == "__main__":
-    # Running with 'python -m uvicorn server.main:app' is recommended
-    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

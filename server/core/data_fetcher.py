@@ -2,7 +2,7 @@ import certifi
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from .. import config
+import config
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 

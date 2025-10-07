@@ -1,12 +1,11 @@
 import logging
-import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
-from ..core import calculation
-from ..scheduler import jobs
-from ..core import codes
-from ..services import discord_sender
+from core import calculation
+from scheduler import jobs
+from core import codes
+from services import discord_sender
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ async def get_all_weather_data():
     """
     Provides a combined JSON output of all weather data.
     """
-    final_json = jobs.get_cached_final_json()
+    final_json = jobs.get_cached_weather_data()
     if not final_json:
         raise HTTPException(status_code=503, detail="The final JSON data is not available yet. Please try again in a moment.")
     return final_json
@@ -38,8 +37,8 @@ async def get_county_forecast(county_name: str):
     logger.info(f"Fetching forecast for county: {decoded_county_name}")
     
     try:
-        cwa_county_data = jobs.get_cached_cwa_county_data()
-        if not cwa_county_data or 'records' not in cwa_county_data:
+        cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+        if not cwa_county_data:
             logger.error("CWA county data not available")
             raise HTTPException(
                 status_code=503,
@@ -51,11 +50,7 @@ async def get_county_forecast(county_name: str):
             )
 
         # Find county
-        target = None
-        for loc in cwa_county_data['records'].get('location', []):
-            if loc.get('locationName') == decoded_county_name:
-                target = loc
-                break
+        target = cwa_county_data.get(decoded_county_name)
 
         if not target:
             logger.error(f"County forecast not found: {decoded_county_name}")
@@ -70,16 +65,7 @@ async def get_county_forecast(county_name: str):
             )
 
         # Simplify county elements (similar approach to township)
-        elements = {}
-        for element in target.get('weatherElement', []):
-            name = element.get('elementName')
-            value = None
-            time_arr = element.get('time') or []
-            if time_arr and time_arr[0].get('parameter'):
-                # County dataset uses 'parameter' instead of 'elementValue'
-                param = time_arr[0]['parameter']
-                value = param.get('parameterName')
-            elements[name] = value
+        elements = target
 
         result = {
             "county": decoded_county_name,
@@ -106,10 +92,10 @@ async def get_county_forecast(county_name: str):
 
 @router.get("/metrics/images", summary="Get image-derived weather metrics")
 async def get_image_metrics():
-	metrics = jobs.get_cached_image_metrics()
-	if not metrics:
-		raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
-	return metrics
+    metrics = jobs.CACHED_IMAGE_METRICS
+    if not metrics:
+        raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
+    return metrics
 
 
 @router.get("/summary", summary="Get combined summary for a county")
@@ -128,8 +114,8 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
         logger.info(f"Looking up county: {decoded_county_name}")
 
         # County weather from CWA
-        cwa_county_data = jobs.get_cached_cwa_county_data()
-        if not cwa_county_data or 'records' not in cwa_county_data:
+        cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
+        if not cwa_county_data:
             logger.error("CWA county data not available")
             raise HTTPException(
                 status_code=503,
@@ -140,11 +126,7 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
                 }
             )
 
-        target = None
-        for loc in cwa_county_data['records'].get('location', []):
-            if loc.get('locationName') == decoded_county_name:
-                target = loc
-                break
+        target = cwa_county_data.get(decoded_county_name)
                 
         if not target:
             logger.error(f"County not found: {decoded_county_name}")
@@ -158,29 +140,18 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
                 }
             )
 
-        elements = {}
-        for element in target.get('weatherElement', []):
-            name = element.get('elementName')
-            value = None
-            time_arr = element.get('time') or []
-            if time_arr and time_arr[0].get('parameter'):
-                param = time_arr[0]['parameter']
-                value = param.get('parameterName')
-            elements[name] = value
+        elements = target
 
-        # Image metrics
-        metrics = jobs.get_cached_image_metrics() or {}
-        qpf_for_county = jobs.get_qpf_for_county(decoded_county_name) or {}
+        # Image metrics from the consolidated cache
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(decoded_county_name) or {}
 
         resp = {
             "county": decoded_county_name,
             "temperature": elements.get("T"),
             "weather_description": elements.get("Wx"),
-            "pop12_percent": metrics.get("pop12_percent"),
-            "pop6_percent": metrics.get("pop6_percent"),
-            "qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
-            "aqi_level": metrics.get("aqi_level"),
+            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "aqi_level": image_metrics.get("aqi_level"),
         }
         logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
         return resp
@@ -201,7 +172,7 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
 
 @router.get("/debug/townships", summary="Debug: list discovered township names")
 async def debug_list_townships(limit: int = 50):
-    data = jobs.get_cached_township_map()
+    data = jobs.get_cached_weather_data().get('township_weather')
     if not data:
         return {"townships": []}
     names = list(data.keys())[:limit]
@@ -232,7 +203,7 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
             decoded_township_name = unquote(township_name)
             logger.info(f"Looking up township by name: {decoded_township_name}")
 
-        township_map = jobs.get_cached_township_map()
+        township_map = jobs.get_cached_weather_data().get('township_weather')
         forecast = None
         
         if township_map:
@@ -243,7 +214,7 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
         else:
             # Fallback: try to parse directly from full records if map not ready
             logger.warning("Township map not available, falling back to full records")
-            cwa_full = jobs.get_cached_cwa_township_data()
+            cwa_full = jobs.CACHED_CWA_TOWNSHIP_DATA
             if cwa_full:
                 forecast = calculation.get_forecast_for_township_from_records(
                     township_name=decoded_township_name,
@@ -262,18 +233,15 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
                 }
             )
 
-        # Attach county-derived metrics when possible
+        # Attach county-derived metrics from the consolidated image metrics cache
         county_name = codes.resolve_county_from_township_name(decoded_township_name)
-        metrics = jobs.get_cached_image_metrics() or {}
-        qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
-        
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
+
         response = {
             **forecast,
-            "qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
-            "pop12_percent": metrics.get("pop12_percent"),
-            "pop6_percent": metrics.get("pop6_percent"),
-            "aqi_level": metrics.get("aqi_level"),
+            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
+            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "aqi_level": image_metrics.get("aqi_level"),
         }
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
@@ -303,7 +271,7 @@ async def notify_township(township_name: str):
         from urllib.parse import unquote
         decoded_township_name = unquote(township_name)
 
-        township_map = jobs.get_cached_township_map()
+        township_map = jobs.get_cached_weather_data().get('township_weather')
         if not township_map:
             logger.error("Township map not available")
             raise HTTPException(
@@ -332,18 +300,16 @@ async def notify_township(township_name: str):
             )
 
         county_name = codes.resolve_county_from_township_name(decoded_township_name)
-        metrics = jobs.get_cached_image_metrics() or {}
-        qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+        image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
 
         msg = (
             f"天氣摘要 - {decoded_township_name}\n"
             f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
             f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
             f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
-            f"QPF12(縣, mm/hr): {qpf_for_county.get('qpf12_mm_per_hr')}\n"
-            f"QPF6(縣, mm/hr): {qpf_for_county.get('qpf6_mm_per_hr')}\n"
-            f"PoP12(圖, %): {metrics.get('pop12_percent')}  PoP6(圖, %): {metrics.get('pop6_percent')}\n"
-            f"AQI: {metrics.get('aqi_level')}\n"
+            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_mm_per_hr')}\n"
+            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_mm_per_hr')}\n"
+            f"AQI 等級(縣): {image_metrics.get('aqi_level')}\n"
         )
 
         try:

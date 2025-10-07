@@ -2,21 +2,115 @@ import { COUNTY_NAME_TO_CODE, LOCATION_DATA, CODE_TO_TOWNSHIP_NAME } from './loc
 import { db } from './firebase.js'; // 匯入 db
 
 document.addEventListener('DOMContentLoaded', () => {
+    const appContent = document.getElementById('app-content');
+    const loginContent = document.getElementById('login-content');
+    const googleLoginBtn = document.getElementById('google-login-btn');
+    const errorMessageDiv = document.getElementById('error-message');
+
+    // 處理重定向回來的登入結果 (必須在 onAuthStateChanged 之前處理)
+    firebase.auth().getRedirectResult().then(result => {
+        if (result.user) {
+            // 處理重定向回來的登入結果
+            const user = result.user;
+            console.log('Google 登入成功 (重定向):', user);
+
+            // 這裡的邏輯與 signInWithPopup 成功後的邏輯相同
+            const userDocRef = db.collection('users').doc(user.uid);
+            userDocRef.get().then(doc => {
+                if (!doc.exists) {
+                    console.log('首次登入，正在建立使用者資料...');
+                    userDocRef.set({
+                        displayName: user.displayName,
+                        email: user.email,
+                        photoURL: user.photoURL,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }).then(() => {
+                        console.log('使用者資料建立成功！');
+                        if (window.location.pathname !== '/index.html' && window.location.pathname !== '/') {
+                            window.location.href = 'index.html'; // 確保重定向到主頁
+                        }
+                    }).catch(error => {
+                        console.error('建立使用者資料失敗:', error);
+                    });
+                } else {
+                    if (window.location.pathname !== '/index.html' && window.location.pathname !== '/') {
+                        window.location.href = 'index.html'; // 確保重定向到主頁
+                    }
+                }
+            }).catch(error => {
+                console.error('獲取使用者資料失敗:', error);
+            });
+        }
+    }).catch(error => {
+        console.error('處理重定向結果失敗:', error);
+        if (errorMessageDiv) {
+            errorMessageDiv.style.display = 'block';
+            errorMessageDiv.textContent = `登入失敗: ${error.message}`;
+        }
+    });
 
     // Firebase 登入狀態監聽器
     firebase.auth().onAuthStateChanged(user => {
         if (user) {
             // 使用者已登入
             console.log('使用者已登入:', user.email);
+            appContent.style.display = 'block';
+            loginContent.style.display = 'none';
             initializeUserSettings(user);
             initializeFCM(user);
 
         } else {
-            // 使用者未登入，導向到登入頁面
-            console.log('使用者未登入，正在導向到 login.html');
-            window.location.href = 'login.html';
+            // 使用者未登入
+            console.log('使用者未登入');
+            appContent.style.display = 'none';
+            loginContent.style.display = 'flex'; // 使用 flex 讓登入介面居中
         }
     });
+
+    if (googleLoginBtn) {
+        googleLoginBtn.addEventListener('click', signInWithGoogle);
+    }
+
+    /**
+     * 使用 Google 帳號進行登入或註冊
+     */
+    async function signInWithGoogle() {
+        const auth = firebase.auth();
+        const provider = new firebase.auth.GoogleAuthProvider();
+    
+        googleLoginBtn.disabled = true;
+        errorMessageDiv.style.display = 'none';
+    
+        try {
+            // 將 signInWithRedirect 改為 signInWithPopup
+            const result = await auth.signInWithPopup(provider);
+            const user = result.user;
+            console.log('Google 登入成功 (彈出視窗):', user);
+        
+            // 因為 Popup 會直接返回 user 物件，所以我們可以在這裡直接處理後續邏輯
+            const userDocRef = db.collection('users').doc(user.uid);
+            const doc = await userDocRef.get();
+        
+            if (!doc.exists) {
+                console.log('首次登入，正在建立使用者資料...');
+                await userDocRef.set({
+                    displayName: user.displayName,
+                    email: user.email,
+                    photoURL: user.photoURL,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                console.log('使用者資料建立成功！');
+            }
+            // 登入成功後，onAuthStateChanged 會自動處理頁面切換，所以這裡不需要重定向
+        
+        } catch (error) {
+            console.error('Google 登入失敗:', error);
+            errorMessageDiv.style.display = 'block';
+            errorMessageDiv.textContent = `登入失敗: ${error.code} - ${error.message}`;
+        } finally {
+            googleLoginBtn.disabled = false;
+        }
+    }
 
     /**
      * 初始化使用者設定功能 (縣市/鄉鎮選擇與儲存)
@@ -140,10 +234,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     settingsStatus.style.color = '#ffcccc';
                     console.error('儲存使用者設定失敗:', error);
                 }
-            } else {
-                settingsStatus.textContent = '請選擇縣市和鄉鎮！';
-                settingsStatus.style.color = '#ffcccc';
-                setTimeout(() => settingsStatus.textContent = '', 3000); // 3秒後清除訊息
             }
         });
     }
@@ -171,8 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     console.log('未獲取到 FCM 註冊 Token。');
                 }
-            } else {
-                console.warn('通知權限被拒絕。');
             }
         } catch (error) {
             console.error('請求通知權限或獲取 Token 失敗:', error);

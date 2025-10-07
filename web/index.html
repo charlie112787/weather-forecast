@@ -16,96 +16,114 @@
 </head>
 
 <body>
-    <header>
-      <div class="info-bar">
-       <span>溫度: --°C</span>
-       <span>天氣概況: ----</span>
-       <span>降雨機率: --%</span>
-       <span>空氣品質: -- (AQI --)</span>
-      </div>
-
-
-     <div class="container">
-       <header>
-        <div class="brand">
-          <div class="logo">W</div>
-          <div>
-          <h1>天氣預報</h1>
-          <p>當天天氣資訊</p>
-        </div>
-      </div>
-
-      <div class="search">
-        <input id="cityInput" placeholder="輸入城市（例如：Taipei）" />
-        <button id="searchBtn">查詢</button>
-      </div>
-    </header>
-
-    <!-- ====== MAIN ====== -->
-    <main>
-      <section class="card current" id="leftColumn">
-        <div class="top-row">
-          <div>
-            <div class="meta" id="location">臺北市 · 現在</div>
-            <div class="temp" id="temperature">--°C</div>
-            <div class="meta" id="condition">晴時多雲</div>
-          </div>
-
-          <div class="icon-wrap" id="weatherIcon">
-            <svg width="72" height="72" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 14C5 14 4 13 4 12C4 10 6 9 8 9C9 9 10 9 11 8C12 7 14 7 15 8C16 9 17 10 18 10C20 10 22 11 22 13C22 15 20 17 18 17H7"
-                    stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
+    <div id="app-content" style="display: none;">
+        <header>
+        <div class="info-bar">
+        <span>溫度: --°C</span>
+        <span>天氣概況: ----</span>
+        <span>降雨機率: --%</span>
+        <span>空氣品質: -- (AQI --)</span>
         </div>
 
-        <div class="details">
-          <div class="badge">溫度感：<span id="feels">--°C</span></div>
-          <div class="badge">濕度：<span id="humidity">--%</span></div>
-          <div class="badge">風速：<span id="wind">-- m/s</span></div>
-          <div class="badge">氣壓：<span id="pressure">-- hPa</span></div>
-          <div class="badge">降雨機率：<span id="rianprobability">--%</span></div>
+
+        <div class="container">
+        <header>
+            <div class="brand">
+            <div class="logo">W</div>
+            <div>
+            <h1>天氣預報</h1>
+            <p>當天天氣資訊</p>
+            </div>
         </div>
 
-        <div>
-          <h3>未來 7 天</h3>
-          <div class="forecast" id="forecastList"></div>
+        <div class="search">
+            <input id="cityInput" placeholder="輸入城市（例如：Taipei）" />
+            <button id="searchBtn">查詢</button>
         </div>
-      </section>
+        </header>
 
-      <!-- ====== 右側資訊 ====== -->
-      <aside class="right-grid">
-        <div class="card">
-          <h3>使用者設定</h3>
-          <div style="margin-top: 16px;">
-            <label for="county-select" style="font-size: 14px; color: var(--muted);">縣市</label>
-            <select id="county-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+        <!-- ====== MAIN ====== -->
+        <main>
+        <section class="card current" id="leftColumn">
+            <div class="top-row">
+            <div>
+                <div class="meta" id="location">臺北市 · 現在</div>
+                <div class="temp" id="temperature">--°C</div>
+                <div class="meta" id="condition">晴時多雲</div>
+            </div>
 
-            <label for="township-select" style="font-size: 14px; color: var(--muted); margin-top: 12px; display: block;">鄉鎮</label>
-            <select id="township-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+            <div class="icon-wrap" id="weatherIcon">
+                <svg width="72" height="72" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 14C5 14 4 13 4 12C4 10 6 9 8 9C9 9 10 9 11 8C12 7 14 7 15 8C16 9 17 10 18 10C20 10 22 11 22 13C20 15 20 17 18 17H7"
+                        stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            </div>
 
-            <button id="save-settings-btn" class="btn settings-save-btn">儲存設定</button>
-            <p id="settings-status" style="font-size: 13px; color: var(--accent-2); text-align: center; margin-top: 10px; height: 15px;"></p>
-          </div>
+            <div class="details">
+            <div class="badge">溫度感：<span id="feels">--°C</span></div>
+            <div class="badge">濕度：<span id="humidity">--%</span></div>
+            <div class="badge">風速：<span id="wind">-- m/s</span></div>
+            <div class="badge">氣壓：<span id="pressure">-- hPa</span></div>
+            <div class="badge">降雨機率：<span id="rianprobability">--%</span></div>
+            </div>
+
+            <div>
+            <h3>未來 7 天</h3>
+            <div class="forecast" id="forecastList"></div>
+            </div>
+        </section>
+
+        <!-- ====== 右側資訊 ====== -->
+        <aside class="right-grid">
+            <div class="card">
+            <h3>使用者設定</h3>
+            <div style="margin-top: 16px;">
+                <label for="county-select" style="font-size: 14px; color: var(--muted);">縣市</label>
+                <select id="county-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+
+                <label for="township-select" style="font-size: 14px; color: var(--muted); margin-top: 12px; display: block;">鄉鎮</label>
+                <select id="township-select" style="width: 100%; background: var(--glass); border: 1px solid rgba(255,255,255,0.04); padding: 10px 12px; border-radius: 12px; color: inherit; margin-top: 8px;"></select>
+
+                <button id="save-settings-btn" class="btn settings-save-btn">儲存設定</button>
+                <p id="settings-status" style="font-size: 13px; color: var(--accent-2); text-align: center; margin-top: 10px; height: 15px;"></p>
+            </div>
+            </div>
+
+            <div class="card chart-box" id="chartCard">
+            <canvas id="tempChart" width="600" height="220"></canvas>
+            </div>
+
+            <div class="card">
+            <h3>介面說明（給設計師）</h3>
+            <ul style="color:var(--muted);line-height:1.6">
+                <li>背景為可更換漸層或圖片，修改 style.css 中 body 部分。</li>
+                <li>Icon 建議使用 SVG，可加動畫或濾鏡效果。</li>
+                <li>天氣卡片可依天氣狀況切換底圖。</li>
+            </ul>
+            </div>
+        </aside>
+        </main>
+
+        <footer>© 2025 Taiwan Weather Alert</footer>
+    </div>
+    </div>
+
+    <div id="login-content">
+        <div class="wrapper">
+            <form id="auth-form">
+                <h1>Weather Alert</h1>
+                <p>請使用您的 Google 帳號登入</p>
+
+                <div id="error-message"></div>
+
+                <button type="button" id="google-login-btn" class="google-btn">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google logo">
+                    使用 Google 登入
+                </button>
+            </form>
         </div>
-
-        <div class="card chart-box" id="chartCard">
-          <canvas id="tempChart" width="600" height="220"></canvas>
-        </div>
-
-        <div class="card">
-          <h3>介面說明（給設計師）</h3>
-          <ul style="color:var(--muted);line-height:1.6">
-            <li>背景為可更換漸層或圖片，修改 style.css 中 body 部分。</li>
-            <li>Icon 建議使用 SVG，可加動畫或濾鏡效果。</li>
-            <li>天氣卡片可依天氣狀況切換底圖。</li>
-          </ul>
-        </div>
-      </aside>
-    </main>
-
-    <footer>© 2025 Taiwan Weather Alert</footer>
-  </div>
+    </div>
 
   <!-- Firebase SDK (Compat) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>

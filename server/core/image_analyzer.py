@@ -145,18 +145,85 @@ def _closest_color(value: Tuple[int, int, int], palette: List[Tuple[int, int, in
     return best
 
 
-def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[float]:
+def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
     """
-    Estimate rainfall intensity (mm/hr) by sampling color at a given pixel and mapping via QPF_COLOR_MAP.
+    Estimate rainfall intensity (mm/hr) by analyzing a square region and returning the min and max QPF values.
     """
     from server import config
     image = _download_image(image_url)
-    x, y = sample_xy
-    if x < 0 or y < 0 or x >= image.width or y >= image.height:
+    x_center, y_center = sample_xy
+
+    box_size = 20
+    half_box = box_size // 2
+
+    # Define the bounding box for the area
+    left = max(0, x_center - half_box)
+    top = max(0, y_center - half_box)
+    right = min(image.width, x_center + half_box)
+    bottom = min(image.height, y_center + half_box)
+
+    if left >= right or top >= bottom:
         return None
-    rgb = image.getpixel((x, y))[:3] if hasattr(image.getpixel((x, y)), '__iter__') else image.getpixel((x, y))
+
+    qpf_values = []
     palette = list(config.QPF_COLOR_MAP.keys())
-    nearest = _closest_color(rgb, palette)
-    return config.QPF_COLOR_MAP.get(nearest)
+
+    # Iterate over all pixels in the bounding box
+    for y in range(top, bottom):
+        for x in range(left, right):
+            rgb = image.getpixel((x, y))[:3]
+            nearest_color = _closest_color(rgb, palette)
+            qpf_value = config.QPF_COLOR_MAP.get(nearest_color)
+            # Exclude 0.0 values from min/max calculation unless it's the only value
+            if qpf_value is not None and qpf_value > 0:
+                qpf_values.append(qpf_value)
+
+    if not qpf_values:
+        # If no rain, return 0.0 for both min and max
+        return {"min": 0.0, "max": 0.0}
+
+    # Return the min and max QPF values found in the area
+    return {"min": min(qpf_values), "max": max(qpf_values)}
+
+def analyze_ncdr_rain_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
+    """
+    Estimate rainfall intensity (mm/hr) from NCDR images by analyzing a square region 
+    and returning the min and max QPF values.
+    """
+    from server import config
+    image = _download_image(image_url)
+    x_center, y_center = sample_xy
+
+    box_size = 20
+    half_box = box_size // 2
+
+    # Define the bounding box for the area
+    left = max(0, x_center - half_box)
+    top = max(0, y_center - half_box)
+    right = min(image.width, x_center + half_box)
+    bottom = min(image.height, y_center + half_box)
+
+    if left >= right or top >= bottom:
+        return None
+
+    qpf_values = []
+    palette = list(config.NCDR_NOWCAST_COLOR_MAP.keys())
+
+    # Iterate over all pixels in the bounding box
+    for y in range(top, bottom):
+        for x in range(left, right):
+            rgb = image.getpixel((x, y))[:3]
+            nearest_color = _closest_color(rgb, palette)
+            qpf_value = config.NCDR_NOWCAST_COLOR_MAP.get(nearest_color)
+            # Exclude 0.0 values from min/max calculation unless it's the only value
+            if qpf_value is not None and qpf_value > 0:
+                qpf_values.append(qpf_value)
+
+    if not qpf_values:
+        # If no rain, return 0.0 for both min and max
+        return {"min": 0.0, "max": 0.0}
+
+    # Return the min and max QPF values found in the area
+    return {"min": min(qpf_values), "max": max(qpf_values)}
 
 

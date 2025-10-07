@@ -40,6 +40,9 @@ POP12_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_12_%Y%m%d%H.png"]
 POP6_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_06_%Y%m%d%H.png"]   # type: ignore[var-annotated]
 AQI_URL_PATTERNS = ["https://airtw.epa.gov.tw/EnvStatus/map_static_img/AQI_Day.png"]    # type: ignore[var-annotated]
 
+# NCDR Nowcast URL pattern (checks for the first hour image to find the series)
+NCDR_NOWCAST_URL_PATTERN = ["https://watch.ncdr.nat.gov.tw/00_Wxmap/7F17_NCDRQPF_12H/%Y%m/%Y%m%d/%Y%m%d%H/%Y%m%d%H_f01h.gif"]
+
 # Crop/sample boxes (left,upper,right,lower). Set to None or a 4-tuple.
 RAIN_PROBABILITY_CROP_BOX = None
 AQI_SAMPLE_BOX = None
@@ -125,3 +128,8 @@ IMAGE_SAMPLE_COORDS = {
     "金門縣": (50, 300),
     "連江縣": (30, 100), # 馬祖
 }
+
+# --- NCDR Nowcast Color Map (Placeholder) ---
+# This is a placeholder copied from QPF_COLOR_MAP. 
+# Calibrate these values to match the legend of the NCDR nowcast images.
+NCDR_NOWCAST_COLOR_MAP = QPF_COLOR_MAP.copy()

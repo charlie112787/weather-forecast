@@ -1,6 +1,6 @@
 import firebase_admin
 from firebase_admin import credentials, messaging
-from .. import config
+import config
 
 # Initialize Firebase Admin SDK
 try:

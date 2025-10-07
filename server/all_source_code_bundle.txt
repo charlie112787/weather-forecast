@@ -1,0 +1,2109 @@
+
+==================== FILE: config.py ====================
+
+# --- Image Analysis Settings (edit directly) ---
+import os
+
+# --- Path Configuration ---
+# Dynamically construct the absolute path to the service account key,
+# assuming it is in the same directory as this config file.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FIREBASE_SERVICE_ACCOUNT_KEY_PATH = os.path.join(BASE_DIR, "serviceAccountKey.json")
+# --- End of Path Configuration ---
+
+# CWA API Authorization Key (edit directly here)
+CWA_API_KEY = "CWA-F3565C7E-B3CB-42AF-B86E-E882A5DAF79F"
+
+# 縣市級預報 (F-C0032-001: 22 縣市)
+CWA_COUNTY_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={CWA_API_KEY}"
+# 鄉鎮級預報 (F-D0047-073: 368 鄉鎮/區) - 這是解決您之前錯誤的關鍵
+CWA_TOWNSHIP_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-073?Authorization={CWA_API_KEY}"
+
+# NCDR API Details (edit directly if used)
+NCDR_API_BASE_URL = "YOUR_NCDR_API_URL_HERE"
+NCDR_API_KEY = "YOUR_NCDR_API_KEY_HERE"
+
+# Discord Webhook URL (edit directly if used)
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1424684753357111369/Cgo20EKHKCZd3eO9wJUDQmLtsTlupgTgTiA1fJyFR667cAqWAo8HeHCRyjpYKcyYLXVt"
+
+# --- Image Analysis Settings (edit directly) ---
+# URLs for rain probability and AQI images to analyze
+RAIN_PROBABILITY_IMAGE_URL = ""
+AQI_IMAGE_URL = ""
+
+# Separate images for 12h and 6h PoP if provided (fallback to RAIN_PROBABILITY_IMAGE_URL)
+POP12_IMAGE_URL = RAIN_PROBABILITY_IMAGE_URL
+POP6_IMAGE_URL = RAIN_PROBABILITY_IMAGE_URL
+
+# If the URLs are dynamic, provide strftime patterns here; resolver will try the latest.
+# Examples (you should replace with real patterns when known):
+#   "https://example.cwa.gov.tw/pop12_%Y%m%d%H.png"
+#   "https://example.cwa.gov.tw/pop6_%Y%m%d%H.png"
+POP12_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_12_%Y%m%d%H.png"]  # type: ignore[var-annotated]
+POP6_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_06_%Y%m%d%H.png"]   # type: ignore[var-annotated]
+AQI_URL_PATTERNS = ["https://airtw.epa.gov.tw/EnvStatus/map_static_img/AQI_Day.png"]    # type: ignore[var-annotated]
+
+# Crop/sample boxes (left,upper,right,lower). Set to None or a 4-tuple.
+RAIN_PROBABILITY_CROP_BOX = None
+AQI_SAMPLE_BOX = None
+
+# Specific crop boxes for PoP12/PoP6 if they reside in different regions of the same image
+POP12_CROP_BOX = None
+POP6_CROP_BOX = None
+
+# Optional path to Tesseract executable (Windows)
+TESSERACT_CMD = ""
+
+# HTTP/TLS settings
+# 由於中央氣象署的 SSL 憑證問題，暫時關閉 SSL 驗證
+REQUESTS_VERIFY_SSL = False
+
+# SSL 錯誤時的 fallback 設置
+ALLOW_INSECURE_FALLBACK = True
+
+# 禁用 urllib3 的不安全請求警告
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- QPF Color Map and Sampling Coordinates ---
+# Map representative RGB colors (as tuples) to rainfall intensity (mm/hr).
+# Calibrate these values to match the legend of the CWA QPF images you use.
+QPF_COLOR_MAP = {
+    # (R, G, B): 降雨強度 (mm/hr)
+    # 0.0 mm/hr
+    (0, 0, 0): 0.0,             # 黑色 (背景/無資料)
+    (255, 255, 255): 0.0,       # 白色 (背景/無雨) 
+    
+    # 0.5 - 2 mm/hr (微弱降雨)
+    (170, 250, 160): 0.5,       # 極淺綠 (Light Green)
+    (0, 220, 0): 1.0,           # 鮮綠色 (Green)
+    
+    # 2 - 8 mm/hr (一般降雨)
+    (0, 190, 255): 3.0,         # 藍色 (Cyan/Light Blue)
+    (0, 0, 255): 6.0,           # 深藍色 (Blue)
+    
+    # 8 - 20 mm/hr (強降雨)
+    (255, 255, 0): 12.0,        # 黃色 (Yellow)
+    (255, 128, 0): 15.0,        # 橘色 (Orange)
+    (255, 0, 0): 25.0,          # 紅色 (Red)
+    
+    # > 20 mm/hr (極端降雨)
+    (255, 0, 255): 40.0,        # 紫色 (Magenta)
+    (128, 0, 128): 60.0,        # 深紫 (Dark Magenta)
+}
+
+# Per-county pixel coordinates for sampling on the QPF map.
+# Coordinates are (x, y) in pixels.
+IMAGE_SAMPLE_COORDS = {
+    # 縣市名稱 : (X 像素座標, Y 像素座標)
+    # 北部
+    "基隆市": (400, 130),
+    "臺北市": (360, 170),
+    "新北市": (330, 220),
+    "桃園市": (280, 260),
+    "新竹市": (240, 320),
+    "新竹縣": (260, 350),
+    
+    # 中部
+    "苗栗縣": (240, 420),
+    "臺中市": (230, 480),
+    "彰化縣": (200, 550),
+    "南投縣": (270, 560),
+    "雲林縣": (200, 620),
+    
+    # 南部
+    "嘉義市": (200, 670),
+    "嘉義縣": (230, 700),
+    "臺南市": (200, 780),
+    "高雄市": (200, 850),
+    "屏東縣": (230, 930),
+    
+    # 東部
+    "宜蘭縣": (420, 320),
+    "花蓮縣": (400, 600),
+    "臺東縣": (350, 900),
+    
+    # 離島
+    "澎湖縣": (50, 750),
+    "金門縣": (50, 300),
+    "連江縣": (30, 100), # 馬祖
+}
+==================== FILE: get_weather.py ====================
+
+import sys
+import os
+import json
+
+from core.data_fetcher import get_cwa_township_forecast_data
+from core.calculation import _is_location_match
+
+def get_township_weather(township_name, county_name, township_data):
+    if not township_data or 'records' not in township_data:
+        return None
+
+    for county in township_data['records']['locations']:
+        if _is_location_match(county_name, county.get('locationsName')):
+            for loc in county['location']:
+                if _is_location_match(township_name, loc.get('locationName')):
+                    for element in loc['weatherElement']:
+                        if element['elementName'] == 'Wx':
+                            return element['time'][0]['parameter']['parameterName']
+    return None
+
+def main():
+    county_name = "臺北市"
+    township_name = "中正區"
+
+    # 1. Fetch data
+    township_data = get_cwa_township_forecast_data(county_name)
+
+    if not township_data:
+        print("Could not fetch weather data.")
+        return
+
+    # 2. Get weather description from township data
+    weather_description = get_township_weather(township_name, county_name, township_data)
+
+    print(f"Weather for {county_name}{township_name}: {weather_description}")
+
+
+if __name__ == "__main__":
+    main()
+==================== FILE: main.py ====================
+
+import sys
+import os
+import uvicorn
+from fastapi import FastAPI
+from dotenv import load_dotenv
+
+# --- Add project root to Python path ---
+# Ensure the repository root is on sys.path so 'server.*' imports work consistently
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+# --- End of path modification ---
+
+from server.api.weather import router as weather_router
+import asyncio
+from server.scheduler import jobs
+from server.scheduler.jobs import scheduler
+
+load_dotenv()
+
+app = FastAPI(
+    title="Weather Forecast API",
+    description="API for providing weather forecasts and sending notifications.",
+    version="1.0.0",
+)
+
+@app.on_event("startup")
+async def startup_event():
+    # Trigger the data fetching job to run immediately in the background
+    print("Triggering initial data fetch job on startup...")
+    asyncio.create_task(jobs.fetch_data_job())
+    
+    # Start the scheduler for subsequent hourly runs
+    scheduler.start()
+    print("FastAPI application startup")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler.shutdown()
+    print("FastAPI application shutdown")
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Weather Forecast API"}
+
+app.include_router(weather_router, prefix="/api/weather")
+
+if __name__ == "__main__":
+    # Running with 'python -m uvicorn server.main:app' is recommended
+    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
+==================== FILE: serviceAccountKey.json ====================
+
+{
+  "type": "service_account",
+  "project_id": "weather-forecast-c62c3",
+  "private_key_id": "e34cd2b74d04c8a9b8fab26a565d35ed73cbb51f",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0AUuynkdexdGU\nIBhu3ZbWXsM53o3Zz7gjIC3P7YdhOl+/nZxU9jZbbJPRyv72cWX8Onk5gBSvcq8y\n1Jo1FMnEJiKrvRaaYMs0LagdB0BSHaj0Y4JGfKeug4vO7zhMc5tti/utTuEnAUM6\nKU+MSL0tVMfV8ZrXi+qAZPmc5yPTweKQ5pZIvWB61JDug2nEgaOq0hsNNYzfvzOP\n1iG7WYQVx/YfDExO5iRUSi5c0iyGlylEFypI5c3ArMq4b66g8Ky3jY2wbOZkQ7HW\nwvnl2wakf8rpC+df+ZW1f9t3fLh+FnAnH5i3adyCPJvDqiWYr1SC8Ikdc5t/LoPX\nKeKt13d1AgMBAAECggEAD8efTFtuE+5RMY7gusinzPIbY4Am55sQitpqzwlabq5l\n2g/l4QLWgAw+0cuIWgVV30HRrQs/2k46R+v1pW/wQhw6ZNtw1vwOREGOX8EUz+i0\nDicyXUiB5fK34l5RN/kt0nF3kNlTM+P7RzwmMjzm10mmh72kM9TFrBdt/xBk287D\n41IjakVSFkmBrdJI4WJ3wO/zp2TS4de1hP1/FPsurrBgyCrm4Sch+0jQmLz61z7O\nN9TjBHZ8Q5Y0Sfhg3q0r8c/avWMSXGI/gTi0Q9J4ePcjfqJ4gir5XXu3m6Wwqryb\nn81DYcxt2MLCcNjTfRGBOYjc4LkeV4s84m5uzzYZPwKBgQDcV5UcagEbink7yYFq\noxKk2/38DioKsvwHJeMis8PDoglDhjawen2cP3wa3dcy0MCns7tFXL+rxlI1SHS7\nlkUUvNLsQWtsbRM89JZLIDHaHuuq/JR77XSJrgWtcQYhtlU7eY+PzvKFJU+wy7mi\nq6Ios5BB6n/HvT1K49inRRL1nwKBgQDRIp07JGaQ5mxe3brEZN+NmiK4LOW5j9uk\ng6i+FenwZ09pj/0X7pvMYR0/kAzxsciv3LqPPehTkbFxTLB5zvs84uQx0SIt4+ID\n3EanZXoL/xYqQbWzHVh4sjWmrsedAcnKJBZyZEwTQrozU/E9N8M95jsmPHsZO6UN\nPN7SsjZyawKBgBCsM+U9hC3wUXIbskY+ZqfA2bwb2kSK/JUR4dj7X0HLXgYU/shl\nzGFpUFu8E4+NyjYmXHJILVyzGf9cJzEWks2Z6B/mZ1mB+2WuYDz5B6yokE6U5Cto\ncVwFpfpUxhEA+fwRG7LXBvTaOOh40egkMpX/2FeUhey4Pg4PpZIqoN+jAoGABCoV\nSW0zIaWE+OqfYnPDw9US5en29Rf5PrBkdsyG6QOVoDt+xbA5p/szEuXybAmnPmE9\n0cZgzvEywFfPl81YUWEPPDK25IUKJhuHyKOLp5t/vH2seZGXBmg+C0CltumnNAA9\n9i8rGKMWhBkiz55BpATmnp9LsDfw1G+m3DkyPlsCgYEAoZsyrQ5NFJyK5i9sXT36\nCecUU3z8RaqIHLsWIq1qrYGk3BO4eB/6ZckZpJ2n5mNEXtZzW2HzWWA4nbn71/Ro\nl+237EvXyx2O309eUNAOFw/leGQTQW3nH4yOrmYd3ScSXQTJFOD4BmajnKxf1ZtE\ny1Ewx0BHkUh4gmYyjemqdPI=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@weather-forecast-c62c3.iam.gserviceaccount.com",
+  "client_id": "108190628543596458377",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40weather-forecast-c62c3.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+
+==================== FILE: api\weather.py ====================
+
+from fastapi import APIRouter, HTTPException
+from server.core import calculation
+from server.scheduler import jobs
+from server.core import codes
+from server.services import discord_sender
+
+router = APIRouter()
+
+@router.get("/ping", summary="Health check")
+async def ping():
+	return {"status": "ok"}
+
+
+@router.get("/all", summary="Get all weather data in the final JSON format")
+async def get_all_weather_data():
+    """
+    Provides a combined JSON output of all weather data.
+    """
+    final_json = jobs.get_cached_final_json()
+    if not final_json:
+        raise HTTPException(status_code=503, detail="The final JSON data is not available yet. Please try again in a moment.")
+    return final_json
+
+
+@router.get("/county/{county_name}", summary="Get CWA Forecast for a County")
+async def get_county_forecast(county_name: str):
+	"""
+	Provides a CWA forecast for a specific county based on cached data.
+	"""
+	from urllib.parse import unquote
+	decoded_county_name = unquote(county_name)
+
+	cwa_county_data = jobs.get_cached_cwa_county_data()
+	if not cwa_county_data or 'records' not in cwa_county_data:
+		raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+
+	# Find county
+	target = None
+	for loc in cwa_county_data['records'].get('location', []):
+		if loc.get('locationName') == decoded_county_name:
+			target = loc
+			break
+
+	if not target:
+		raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+
+	# Simplify county elements (similar approach to township)
+	elements = {}
+	for element in target.get('weatherElement', []):
+		name = element.get('elementName')
+		value = None
+		time_arr = element.get('time') or []
+		if time_arr and time_arr[0].get('parameter'):
+			# County dataset uses 'parameter' instead of 'elementValue'
+			param = time_arr[0]['parameter']
+			value = param.get('parameterName')
+		elements[name] = value
+
+	return {
+		"county": decoded_county_name,
+		"cwa_forecast": {
+			"temperature": elements.get("T"),
+			"chance_of_rain_12h": elements.get("PoP12h"),
+			"weather_description": elements.get("Wx"),
+		},
+	}
+
+
+@router.get("/metrics/images", summary="Get image-derived weather metrics")
+async def get_image_metrics():
+	metrics = jobs.get_cached_image_metrics()
+	if not metrics:
+		raise HTTPException(status_code=503, detail="Image metrics are not available yet. Please try again in a moment.")
+	return metrics
+
+
+@router.get("/summary", summary="Get combined summary for a county")
+async def get_summary(county_name: str = "", county_code: str = ""):
+	"""
+	Combines CWA county-level temperature/weather with image-derived PoP6/PoP12 and AQI.
+	"""
+	from urllib.parse import unquote
+	if county_code:
+		decoded_county_name = codes.COUNTY_CODE_TO_NAME.get(county_code, county_code)
+	else:
+		decoded_county_name = unquote(county_name)
+	print(f"[summary] county={decoded_county_name}")
+
+	# County weather from CWA
+	cwa_county_data = jobs.get_cached_cwa_county_data()
+	if not cwa_county_data or 'records' not in cwa_county_data:
+		raise HTTPException(status_code=503, detail="CWA county forecast data is not available yet. Please try again in a moment.")
+
+	target = None
+	for loc in cwa_county_data['records'].get('location', []):
+		if loc.get('locationName') == decoded_county_name:
+			target = loc
+			break
+	if not target:
+		raise HTTPException(status_code=404, detail=f"Forecast for county '{decoded_county_name}' not found.")
+
+	elements = {}
+	for element in target.get('weatherElement', []):
+		name = element.get('elementName')
+		value = None
+		time_arr = element.get('time') or []
+		if time_arr and time_arr[0].get('parameter'):
+			param = time_arr[0]['parameter']
+			value = param.get('parameterName')
+		elements[name] = value
+
+	# Image metrics
+	metrics = jobs.get_cached_image_metrics() or {}
+	qpf_for_county = jobs.get_qpf_for_county(decoded_county_name) or {}
+
+	resp = {
+		"county": decoded_county_name,
+		"temperature": elements.get("T"),
+		"weather_description": elements.get("Wx"),
+		"pop12_percent": metrics.get("pop12_percent"),
+		"pop6_percent": metrics.get("pop6_percent"),
+		"qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
+		"qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
+		"aqi_level": metrics.get("aqi_level"),
+	}
+	print(f"[summary] resp={resp}")
+	return resp
+
+
+@router.get("/debug/townships", summary="Debug: list discovered township names")
+async def debug_list_townships(limit: int = 50):
+	data = jobs.get_cached_township_map()
+	if not data:
+		return {"townships": []}
+	names = list(data.keys())[:limit]
+	return {"townships": names, "count": len(data)}
+
+
+@router.get("/codes", summary="List supported county/township codes")
+async def list_codes():
+	return {
+		"counties": codes.COUNTY_NAME_TO_CODE,
+		"townships": codes.TOWNSHIP_NAME_TO_CODE,
+	}
+
+
+@router.get("/{township_name}", summary="Get CWA Forecast for a Township")
+async def get_township_forecast(township_name: str = "", township_code: str = ""):
+	"""
+	Provides a CWA forecast for a specific township based on cached data.
+	"""
+	from urllib.parse import unquote
+	if township_code:
+		decoded_township_name = codes.TOWNSHIP_CODE_TO_NAME.get(township_code, township_code)
+	else:
+		decoded_township_name = unquote(township_name)
+
+	township_map = jobs.get_cached_township_map()
+	forecast = None
+	if township_map:
+		forecast = calculation.get_forecast_for_township(
+			township_name=decoded_township_name,
+			township_map=township_map
+		)
+	else:
+		# Fallback: try to parse directly from full records if map not ready
+		cwa_full = jobs.get_cached_cwa_township_data()
+		if cwa_full:
+			forecast = calculation.get_forecast_for_township_from_records(
+				township_name=decoded_township_name,
+				all_cwa_data=cwa_full,
+			)
+
+	if not forecast:
+		raise HTTPException(status_code=404, detail=f"Forecast for township '{decoded_township_name}' not found.")
+
+	# Attach county-derived metrics when possible
+	county_name = codes.resolve_county_from_township_name(decoded_township_name)
+	metrics = jobs.get_cached_image_metrics() or {}
+	qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+	return {
+		**forecast,
+		"qpf12_mm_per_hr": qpf_for_county.get("qpf12_mm_per_hr"),
+		"qpf6_mm_per_hr": qpf_for_county.get("qpf6_mm_per_hr"),
+		"pop12_percent": metrics.get("pop12_percent"),
+		"pop6_percent": metrics.get("pop6_percent"),
+		"aqi_level": metrics.get("aqi_level"),
+	}
+
+
+@router.post("/notify/township/{township_name}", summary="Send township summary to Discord")
+async def notify_township(township_name: str):
+	from urllib.parse import unquote
+	decoded_township_name = unquote(township_name)
+
+	township_map = jobs.get_cached_township_map()
+	if not township_map:
+		raise HTTPException(status_code=503, detail="Township map is not available yet. Please try again in a moment.")
+
+	forecast = calculation.get_forecast_for_township(
+		township_name=decoded_township_name,
+		township_map=township_map,
+	)
+	if not forecast:
+		raise HTTPException(status_code=404, detail=f"Forecast for township '{decoded_township_name}' not found.")
+
+	county_name = codes.resolve_county_from_township_name(decoded_township_name)
+	metrics = jobs.get_cached_image_metrics() or {}
+	qpf_for_county = jobs.get_qpf_for_county(county_name) or {}
+
+	msg = (
+		f"天氣摘要 - {decoded_township_name}\n"
+		f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
+		f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
+		f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
+		f"QPF12(縣, mm/hr): {qpf_for_county.get('qpf12_mm_per_hr')}\n"
+		f"QPF6(縣, mm/hr): {qpf_for_county.get('qpf6_mm_per_hr')}\n"
+		f"PoP12(圖, %): {metrics.get('pop12_percent')}  PoP6(圖, %): {metrics.get('pop6_percent')}\n"
+		f"AQI: {metrics.get('aqi_level')}\n"
+	)
+
+	discord_sender.send_to_discord(msg)
+	return {"ok": True}
+
+==================== FILE: api\__init__.py ====================
+
+
+==================== FILE: core\calculation.py ====================
+
+def _normalize_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+    # Normalize common variants and whitespace
+    return name.replace("台", "臺").replace(" ", "").strip()
+
+
+def get_forecast_for_township(township_name: str, township_map: dict):
+    """
+    Extracts and processes CWA forecast data for a specific township using an efficient lookup map.
+
+    Args:
+        township_name: The full name of the township (e.g., "臺北市中正區").
+        township_map: A pre-processed dictionary mapping normalized township names to their data.
+
+    Returns:
+        A dictionary containing the processed forecast, or None if not found.
+    """
+    if not township_map:
+        print("Error: Township map is not available or empty.")
+        return None
+
+    normalized_name = _normalize_name(township_name)
+    cwa_location_data = township_map.get(normalized_name)
+
+    if not cwa_location_data:
+        print(f"Error: Township '{township_name}' not found in the map. Normalized name: '{normalized_name}'")
+        return None
+
+    # 2) Extract weather elements
+    weather_elements = {}
+    for element in cwa_location_data.get('weatherElement', []):
+        element_name = element.get('elementName')
+        element_value = "N/A"
+        time_arr = element.get('time') or []
+        if time_arr:
+            first = time_arr[0]
+            if isinstance(first, dict) and 'elementValue' in first and first['elementValue']:
+                ev = first['elementValue'][0]
+                if element_name == "天氣現象":
+                    element_value = ev.get("Weather")
+                elif element_name == "12小時降雨機率":
+                    element_value = ev.get("ProbabilityOfPrecipitation")
+                elif element_name == "平均溫度":
+                    element_value = ev.get("Temperature")
+        if element_name:
+            weather_elements[element_name] = element_value
+
+    # 3) Build response
+    return {
+        "township": township_name,
+        "cwa_forecast": {
+            "temperature": weather_elements.get("平均溫度"),
+            "chance_of_rain_12h": weather_elements.get("12小時降雨機率"),
+            "weather_description": weather_elements.get("天氣現象"),
+        },
+    }
+
+
+def get_forecast_for_township_from_records(township_name: str, all_cwa_data: dict):
+    """
+    Fallback: Walk full CWA records to locate township and extract elements.
+    """
+    if not all_cwa_data or 'records' not in all_cwa_data:
+        return None
+    target = None
+    records = all_cwa_data['records']
+    # Traverse likely shapes
+    groups = records.get('Locations')
+    if isinstance(groups, list):
+        for grp in groups:
+            if not isinstance(grp, dict):
+                continue
+            counties = grp.get('Location')
+            if isinstance(counties, list):
+                for county in counties:
+                    if not isinstance(county, dict):
+                        continue
+                    # Town list under county
+                    towns = county.get('location') or county.get('Location')
+                    if isinstance(towns, list):
+                        for town in towns:
+                            nm = town.get('locationName') or town.get('LocationName')
+                            if _normalize_name(nm) == _normalize_name(township_name):
+                                target = town
+                                break
+                        if target:
+                            break
+                if target:
+                    break
+    if target is None:
+        # Last resort: scan any locations directly
+        locs = records.get('location')
+        if isinstance(locs, list):
+            for loc in locs:
+                nm = loc.get('locationName') or loc.get('LocationName') if isinstance(loc, dict) else None
+                if _normalize_name(nm) == _normalize_name(township_name):
+                    target = loc
+                    break
+    if target is None:
+        return None
+    weather_elements = {}
+    for element in target.get('weatherElement', []):
+        element_name = element.get('elementName')
+        element_value = "N/A"
+        time_arr = element.get('time') or []
+        if time_arr:
+            first = time_arr[0]
+            if isinstance(first, dict) and 'elementValue' in first and first['elementValue']:
+                ev = first['elementValue'][0]
+                if element_name == "天氣現象":
+                    element_value = ev.get("Weather")
+                elif element_name == "12小時降雨機率":
+                    element_value = ev.get("ProbabilityOfPrecipitation")
+                elif element_name == "平均溫度":
+                    element_value = ev.get("Temperature")
+        if element_name:
+            weather_elements[element_name] = element_value
+    return {
+        "township": township_name,
+        "cwa_forecast": {
+            "temperature": weather_elements.get("平均溫度"),
+            "chance_of_rain_12h": weather_elements.get("12小時降雨機率"),
+            "weather_description": weather_elements.get("天氣現象"),
+        },
+    }
+
+==================== FILE: core\codes.py ====================
+
+from typing import Dict
+
+COUNTY_NAME_TO_CODE: Dict[str, str] = {
+    # 北部地區
+    "基隆市": "KEE",
+    "臺北市": "TPE",
+    "新北市": "NTP",
+    "桃園市": "TAO",
+    "新竹市": "HSC",
+    "新竹縣": "HSH",
+    
+    # 中部地區
+    "苗栗縣": "MIA",
+    "臺中市": "TXG",
+    "彰化縣": "CHA",
+    "南投縣": "NAN",
+    "雲林縣": "YUN",
+    
+    # 南部地區
+    "嘉義市": "CYI",
+    "嘉義縣": "CYQ",
+    "臺南市": "TNN",
+    "高雄市": "KHH",
+    "屏東縣": "PIF",
+    
+    # 東部地區
+    "宜蘭縣": "ILA",
+    "花蓮縣": "HUA",
+    "臺東縣": "TTT",
+    
+    # 離島地區
+    "澎湖縣": "PEN",
+    "金門縣": "KIN",
+    "連江縣": "LIE",  # 馬祖
+}
+
+COUNTY_CODE_TO_NAME: Dict[str, str] = {code: name for name, code in COUNTY_NAME_TO_CODE.items()}
+
+# Township codes follow the postal code system
+TOWNSHIP_NAME_TO_CODE: Dict[str, str] = {
+    # ----------------------
+    # 臺北市 (TPE)
+    # ----------------------
+    "臺北市中正區": "TPE-100",
+    "臺北市大同區": "TPE-103",
+    "臺北市中山區": "TPE-104",
+    "臺北市松山區": "TPE-105",
+    "臺北市大安區": "TPE-106",
+    "臺北市萬華區": "TPE-108",
+    "臺北市信義區": "TPE-110",
+    "臺北市士林區": "TPE-111",
+    "臺北市北投區": "TPE-112",
+    "臺北市內湖區": "TPE-114",
+    "臺北市南港區": "TPE-115",
+    "臺北市文山區": "TPE-116",
+
+    # ----------------------
+    # 基隆市 (KEE)
+    # ----------------------
+    "基隆市仁愛區": "KEE-200",
+    "基隆市信義區": "KEE-201",
+    "基隆市中正區": "KEE-202",
+    "基隆市中山區": "KEE-203",
+    "基隆市安樂區": "KEE-204",
+    "基隆市暖暖區": "KEE-205",
+    "基隆市七堵區": "KEE-206",
+
+    # ----------------------
+    # 新北市 (NTP)
+    # ----------------------
+    "新北市萬里區": "NTP-207",
+    "新北市金山區": "NTP-208",
+    "新北市板橋區": "NTP-220",
+    "新北市汐止區": "NTP-221",
+    "新北市深坑區": "NTP-222",
+    "新北市石碇區": "NTP-223",
+    "新北市瑞芳區": "NTP-224",
+    "新北市平溪區": "NTP-226",
+    "新北市雙溪區": "NTP-227",
+    "新北市貢寮區": "NTP-228",
+    "新北市新店區": "NTP-231",
+    "新北市坪林區": "NTP-232",
+    "新北市烏來區": "NTP-233",
+    "新北市永和區": "NTP-234",
+    "新北市中和區": "NTP-235",
+    "新北市土城區": "NTP-236",
+    "新北市三峽區": "NTP-237",
+    "新北市樹林區": "NTP-238",
+    "新北市鶯歌區": "NTP-239",
+    "新北市三重區": "NTP-241",
+    "新北市新莊區": "NTP-242",
+    "新北市泰山區": "NTP-243",
+    "新北市林口區": "NTP-244",
+    "新北市蘆洲區": "NTP-247",
+    "新北市五股區": "NTP-248",
+    "新北市八里區": "NTP-249",
+    "新北市淡水區": "NTP-251",
+    "新北市三芝區": "NTP-252",
+    "新北市石門區": "NTP-253",
+
+    # ----------------------
+    # 桃園市 (TAO)
+    # ----------------------
+    "桃園市中壢區": "TAO-320",
+    "桃園市平鎮區": "TAO-324",
+    "桃園市龍潭區": "TAO-325",
+    "桃園市楊梅區": "TAO-326",
+    "桃園市新屋區": "TAO-327",
+    "桃園市觀音區": "TAO-328",
+    "桃園市桃園區": "TAO-330",
+    "桃園市龜山區": "TAO-333",
+    "桃園市八德區": "TAO-334",
+    "桃園市大溪區": "TAO-335",
+    "桃園市復興區": "TAO-336",
+    "桃園市大園區": "TAO-337",
+    "桃園市蘆竹區": "TAO-338",
+
+    # ----------------------
+    # 新竹市 (HSC) & 新竹縣 (HSH)
+    # ----------------------
+    "新竹市東區": "HSC-300",
+    "新竹市北區": "HSC-300",
+    "新竹市香山區": "HSC-300",
+    "新竹縣竹北市": "HSH-302",
+    "新竹縣湖口鄉": "HSH-303",
+    "新竹縣新豐鄉": "HSH-304",
+    "新竹縣新埔鎮": "HSH-305",
+    "新竹縣關西鎮": "HSH-306",
+    "新竹縣芎林鄉": "HSH-307",
+    "新竹縣寶山鄉": "HSH-308",
+    "新竹縣竹東鎮": "HSH-310",
+    "新竹縣五峰鄉": "HSH-311",
+    "新竹縣橫山鄉": "HSH-312",
+    "新竹縣尖石鄉": "HSH-313",
+    "新竹縣北埔鄉": "HSH-314",
+    "新竹縣峨眉鄉": "HSH-315",
+    
+    # ----------------------
+    # 苗栗縣 (MIA)
+    # ----------------------
+    "苗栗縣竹南鎮": "MIA-350",
+    "苗栗縣頭份市": "MIA-351",
+    "苗栗縣三灣鄉": "MIA-352",
+    "苗栗縣南庄鄉": "MIA-353",
+    "苗栗縣獅潭鄉": "MIA-354",
+    "苗栗縣後龍鎮": "MIA-356",
+    "苗栗縣通霄鎮": "MIA-357",
+    "苗栗縣苑裡鎮": "MIA-358",
+    "苗栗縣苗栗市": "MIA-360",
+    "苗栗縣造橋鄉": "MIA-361",
+    "苗栗縣頭屋鄉": "MIA-362",
+    "苗栗縣公館鄉": "MIA-363",
+    "苗栗縣大湖鄉": "MIA-364",
+    "苗栗縣泰安鄉": "MIA-365",
+    "苗栗縣銅鑼鄉": "MIA-366",
+    "苗栗縣三義鄉": "MIA-367",
+    "苗栗縣西湖鄉": "MIA-368",
+    "苗栗縣卓蘭鎮": "MIA-369",
+    
+    # ----------------------
+    # 臺中市 (TXG)
+    # ----------------------
+    "臺中市中區": "TXG-400",
+    "臺中市東區": "TXG-401",
+    "臺中市南區": "TXG-402",
+    "臺中市西區": "TXG-403",
+    "臺中市北區": "TXG-404",
+    "臺中市北屯區": "TXG-406",
+    "臺中市西屯區": "TXG-407",
+    "臺中市南屯區": "TXG-408",
+    "臺中市豐原區": "TXG-420",
+    "臺中市后里區": "TXG-421",
+    "臺中市石岡區": "TXG-422",
+    "臺中市東勢區": "TXG-423",
+    "臺中市和平區": "TXG-424",
+    "臺中市新社區": "TXG-426",
+    "臺中市潭子區": "TXG-427",
+    "臺中市大雅區": "TXG-428",
+    "臺中市神岡區": "TXG-429",
+    "臺中市大肚區": "TXG-432",
+    "臺中市沙鹿區": "TXG-433",
+    "臺中市龍井區": "TXG-434",
+    "臺中市梧棲區": "TXG-435",
+    "臺中市清水區": "TXG-436",
+    "臺中市大甲區": "TXG-437",
+    "臺中市外埔區": "TXG-438",
+    "臺中市大安區": "TXG-439",
+    "臺中市太平區": "TXG-411",
+    "臺中市大里區": "TXG-412",
+    "臺中市霧峰區": "TXG-413",
+    "臺中市烏日區": "TXG-414",
+
+    # ----------------------
+    # 彰化縣 (CHA)
+    # ----------------------
+    "彰化縣彰化市": "CHA-500",
+    "彰化縣芬園鄉": "CHA-502",
+    "彰化縣花壇鄉": "CHA-503",
+    "彰化縣秀水鄉": "CHA-504",
+    "彰化縣鹿港鎮": "CHA-505",
+    "彰化縣福興鄉": "CHA-506",
+    "彰化縣線西鄉": "CHA-507",
+    "彰化縣伸港鄉": "CHA-508",
+    "彰化縣員林市": "CHA-510",
+    "彰化縣社頭鄉": "CHA-511",
+    "彰化縣永靖鄉": "CHA-512",
+    "彰化縣埔心鄉": "CHA-513",
+    "彰化縣溪湖鎮": "CHA-514",
+    "彰化縣大村鄉": "CHA-515",
+    "彰化縣埔鹽鄉": "CHA-516",
+    "彰化縣田中鎮": "CHA-520",
+    "彰化縣北斗鎮": "CHA-521",
+    "彰化縣田尾鄉": "CHA-522",
+    "彰化縣埤頭鄉": "CHA-523",
+    "彰化縣芳苑鄉": "CHA-524",
+    "彰化縣二林鎮": "CHA-525",
+    "彰化縣竹塘鄉": "CHA-526",
+    "彰化縣大城鄉": "CHA-527",
+    "彰化縣溪州鄉": "CHA-528",
+    
+    # ----------------------
+    # 南投縣 (NAN)
+    # ----------------------
+    "南投縣南投市": "NAN-540",
+    "南投縣中寮鄉": "NAN-541",
+    "南投縣草屯鎮": "NAN-542",
+    "南投縣國姓鄉": "NAN-544",
+    "南投縣埔里鎮": "NAN-545",
+    "南投縣仁愛鄉": "NAN-546",
+    "南投縣名間鄉": "NAN-551",
+    "南投縣集集鎮": "NAN-552",
+    "南投縣水里鄉": "NAN-553",
+    "南投縣魚池鄉": "NAN-555",
+    "南投縣信義鄉": "NAN-556",
+    "南投縣竹山鎮": "NAN-557",
+    "南投縣鹿谷鄉": "NAN-558",
+    
+    # ----------------------
+    # 雲林縣 (YUN)
+    # ----------------------
+    "雲林縣斗南鎮": "YUN-630",
+    "雲林縣大埤鄉": "YUN-631",
+    "雲林縣虎尾鎮": "YUN-632",
+    "雲林縣土庫鎮": "YUN-633",
+    "雲林縣褒忠鄉": "YUN-634",
+    "雲林縣東勢鄉": "YUN-635",
+    "雲林縣臺西鄉": "YUN-636",
+    "雲林縣崙背鄉": "YUN-637",
+    "雲林縣麥寮鄉": "YUN-638",
+    "雲林縣斗六市": "YUN-640",
+    "雲林縣古坑鄉": "YUN-646",
+    "雲林縣莿桐鄉": "YUN-647",
+    "雲林縣林內鄉": "YUN-648",
+    "雲林縣民雄鄉": "YUN-621", # 註：此為民雄鄉 (嘉義縣) 錯誤數據，此處為郵遞區號範圍
+    "雲林縣西螺鎮": "YUN-648",
+    "雲林縣二崙鄉": "YUN-649",
+    "雲林縣北港鎮": "YUN-651",
+    "雲林縣水林鄉": "YUN-652",
+    "雲林縣口湖鄉": "YUN-653",
+    "雲林縣四湖鄉": "YUN-654",
+    "雲林縣元長鄉": "YUN-655",
+
+    # ----------------------
+    # 嘉義市 (CYI) & 嘉義縣 (CYQ)
+    # ----------------------
+    "嘉義市西區": "CYI-600",
+    "嘉義市東區": "CYI-600",
+    "嘉義縣番路鄉": "CYQ-602",
+    "嘉義縣梅山鄉": "CYQ-603",
+    "嘉義縣竹崎鄉": "CYQ-604",
+    "嘉義縣阿里山鄉": "CYQ-605",
+    "嘉義縣中埔鄉": "CYQ-606",
+    "嘉義縣大埔鄉": "CYQ-607",
+    "嘉義縣水上鄉": "CYQ-608",
+    "嘉義縣鹿草鄉": "CYQ-611",
+    "嘉義縣太保市": "CYQ-612",
+    "嘉義縣朴子市": "CYQ-613",
+    "嘉義縣東石鄉": "CYQ-614",
+    "嘉義縣六腳鄉": "CYQ-615",
+    "嘉義縣新港鄉": "CYQ-616",
+    "嘉義縣民雄鄉": "CYQ-621",
+    "嘉義縣大林鎮": "CYQ-622",
+    "嘉義縣溪口鄉": "CYQ-623",
+    "嘉義縣義竹鄉": "CYQ-624",
+    "嘉義縣布袋鎮": "CYQ-625",
+
+    # ----------------------
+    # 臺南市 (TNN)
+    # ----------------------
+    "臺南市中西區": "TNN-700",
+    "臺南市東區": "TNN-701",
+    "臺南市南區": "TNN-702",
+    "臺南市北區": "TNN-704",
+    "臺南市安平區": "TNN-708",
+    "臺南市安南區": "TNN-709",
+    "臺南市永康區": "TNN-710",
+    "臺南市歸仁區": "TNN-711",
+    "臺南市新化區": "TNN-712",
+    "臺南市左鎮區": "TNN-713",
+    "臺南市玉井區": "TNN-714",
+    "臺南市楠西區": "TNN-715",
+    "臺南市南化區": "TNN-716",
+    "臺南市仁德區": "TNN-717",
+    "臺南市關廟區": "TNN-718",
+    "臺南市龍崎區": "TNN-719",
+    "臺南市官田區": "TNN-720",
+    "臺南市麻豆區": "TNN-721",
+    "臺南市佳里區": "TNN-722",
+    "臺南市西港區": "TNN-723",
+    "臺南市七股區": "TNN-724",
+    "臺南市將軍區": "TNN-725",
+    "臺南市學甲區": "TNN-726",
+    "臺南市北門區": "TNN-727",
+    "臺南市新營區": "TNN-730",
+    "臺南市後壁區": "TNN-731",
+    "臺南市白河區": "TNN-732",
+    "臺南市東山區": "TNN-733",
+    "臺南市六甲區": "TNN-734",
+    "臺南市下營區": "TNN-735",
+    "臺南市柳營區": "TNN-736",
+    "臺南市鹽水區": "TNN-737",
+    "臺南市善化區": "TNN-741",
+    "臺南市大內區": "TNN-742",
+    "臺南市山上區": "TNN-743",
+    "臺南市新市區": "TNN-744",
+    "臺南市安定區": "TNN-745",
+    
+    # ----------------------
+    # 高雄市 (KHH)
+    # ----------------------
+    "高雄市新興區": "KHH-800",
+    "高雄市前金區": "KHH-801",
+    "高雄市新興區": "KHH-800",
+    "高雄市苓雅區": "KHH-802",
+    "高雄市前鎮區": "KHH-806",
+    "高雄市旗津區": "KHH-805",
+    "高雄市小港區": "KHH-812",
+    "高雄市鼓山區": "KHH-804",
+    "高雄市鹽埕區": "KHH-803",
+    "高雄市三民區": "KHH-807",
+    "高雄市楠梓區": "KHH-811",
+    "高雄市左營區": "KHH-813",
+    "高雄市梓官區": "KHH-814",
+    "高雄市彌陀區": "KHH-827",
+    "高雄市永安區": "KHH-828",
+    "高雄市燕巢區": "KHH-824",
+    "高雄市橋頭區": "KHH-825",
+    "高雄市岡山區": "KHH-820",
+    "高雄市路竹區": "KHH-821",
+    "高雄市阿蓮區": "KHH-822",
+    "高雄市湖內區": "KHH-829",
+    "高雄市茄萣區": "KHH-826",
+    "高雄市田寮區": "KHH-823",
+    "高雄市旗山區": "KHH-842",
+    "高雄市美濃區": "KHH-843",
+    "高雄市六龜區": "KHH-844",
+    "高雄市甲仙區": "KHH-847",
+    "高雄市杉林區": "KHH-846",
+    "高雄市內門區": "KHH-845",
+    "高雄市茂林區": "KHH-851",
+    "高雄市桃源區": "KHH-848",
+    "高雄市那瑪夏區": "KHH-849",
+    "高雄市大樹區": "KHH-840",
+    "高雄市仁武區": "KHH-815",
+    "高雄市鳥松區": "KHH-833",
+    "高雄市大社區": "KHH-815",
+    "高雄市鳳山區": "KHH-830",
+    "高雄市大寮區": "KHH-831",
+    "高雄市林園區": "KHH-832",
+    
+    # ----------------------
+    # 屏東縣 (PIF)
+    # ----------------------
+    "屏東縣屏東市": "PIF-900",
+    "屏東縣三地門鄉": "PIF-901",
+    "屏東縣霧臺鄉": "PIF-902",
+    "屏東縣瑪家鄉": "PIF-903",
+    "屏東縣九如鄉": "PIF-904",
+    "屏東縣里港鄉": "PIF-905",
+    "屏東縣高樹鄉": "PIF-906",
+    "屏東縣鹽埔鄉": "PIF-907",
+    "屏東縣長治鄉": "PIF-908",
+    "屏東縣麟洛鄉": "PIF-909",
+    "屏東縣竹田鄉": "PIF-911",
+    "屏東縣內埔鄉": "PIF-912",
+    "屏東縣萬丹鄉": "PIF-913",
+    "屏東縣潮州鎮": "PIF-920",
+    "屏東縣泰武鄉": "PIF-921",
+    "屏東縣來義鄉": "PIF-922",
+    "屏東縣萬巒鄉": "PIF-923",
+    "屏東縣崁頂鄉": "PIF-924",
+    "屏東縣新埤鄉": "PIF-925",
+    "屏東縣南州鄉": "PIF-926",
+    "屏東縣林邊鄉": "PIF-927",
+    "屏東縣東港鎮": "PIF-928",
+    "屏東縣琉球鄉": "PIF-929",
+    "屏東縣佳冬鄉": "PIF-931",
+    "屏東縣新園鄉": "PIF-932",
+    "屏東縣枋寮鄉": "PIF-940",
+    "屏東縣枋山鄉": "PIF-941",
+    "屏東縣春日鄉": "PIF-942",
+    "屏東縣獅子鄉": "PIF-943",
+    "屏東縣車城鄉": "PIF-944",
+    "屏東縣牡丹鄉": "PIF-945",
+    "屏東縣恆春鎮": "PIF-946",
+    "屏東縣滿州鄉": "PIF-947",
+    
+    # ----------------------
+    # 宜蘭縣 (ILA)
+    # ----------------------
+    "宜蘭縣宜蘭市": "ILA-260",
+    "宜蘭縣頭城鎮": "ILA-261",
+    "宜蘭縣礁溪鄉": "ILA-262",
+    "宜蘭縣壯圍鄉": "ILA-263",
+    "宜蘭縣員山鄉": "ILA-264",
+    "宜蘭縣羅東鎮": "ILA-265",
+    "宜蘭縣三星鄉": "ILA-266",
+    "宜蘭縣大同鄉": "ILA-267",
+    "宜蘭縣冬山鄉": "ILA-269",
+    "宜蘭縣五結鄉": "ILA-268",
+    "宜蘭縣蘇澳鎮": "ILA-270",
+    "宜蘭縣南澳鄉": "ILA-272",
+    
+    # ----------------------
+    # 花蓮縣 (HUA)
+    # ----------------------
+    "花蓮縣花蓮市": "HUA-970",
+    "花蓮縣新城鄉": "HUA-971",
+    "花蓮縣秀林鄉": "HUA-972",
+    "花蓮縣吉安鄉": "HUA-973",
+    "花蓮縣壽豐鄉": "HUA-974",
+    "花蓮縣鳳林鎮": "HUA-975",
+    "花蓮縣光復鄉": "HUA-976",
+    "花蓮縣豐濱鄉": "HUA-977",
+    "花蓮縣瑞穗鄉": "HUA-978",
+    "花蓮縣萬榮鄉": "HUA-979",
+    "花蓮縣玉里鎮": "HUA-981",
+    "花蓮縣富里鄉": "HUA-983",
+    "花蓮縣卓溪鄉": "HUA-982",
+    
+    # ----------------------
+    # 臺東縣 (TTT)
+    # ----------------------
+    "臺東縣臺東市": "TTT-950",
+    "臺東縣綠島鄉": "TTT-951",
+    "臺東縣蘭嶼鄉": "TTT-952",
+    "臺東縣延平鄉": "TTT-953",
+    "臺東縣卑南鄉": "TTT-954",
+    "臺東縣鹿野鄉": "TTT-955",
+    "臺東縣關山鎮": "TTT-956",
+    "臺東縣海端鄉": "TTT-957",
+    "臺東縣池上鄉": "TTT-958",
+    "臺東縣東河鄉": "TTT-959",
+    "臺東縣成功鎮": "TTT-961",
+    "臺東縣長濱鄉": "TTT-962",
+    "臺東縣太麻里鄉": "TTT-963",
+    "臺東縣金峰鄉": "TTT-964",
+    "臺東縣大武鄉": "TTT-965",
+    "臺東縣達仁鄉": "TTT-966",
+    
+    # ----------------------
+    # 澎湖縣 (PEN)
+    # ----------------------
+    "澎湖縣馬公市": "PEN-880",
+    "澎湖縣西嶼鄉": "PEN-881",
+    "澎湖縣望安鄉": "PEN-882",
+    "澎湖縣七美鄉": "PEN-883",
+    "澎湖縣白沙鄉": "PEN-884",
+    "澎湖縣湖西鄉": "PEN-885",
+    
+    # ----------------------
+    # 金門縣 (KIN) & 連江縣 (LIE)
+    # ----------------------
+    "金門縣金沙鎮": "KIN-890",
+    "金門縣金湖鎮": "KIN-891",
+    "金門縣金寧鄉": "KIN-892",
+    "金門縣金城鎮": "KIN-893",
+    "金門縣烈嶼鄉": "KIN-894",
+    "金門縣烏坵鄉": "KIN-896",
+    "連江縣南竿鄉": "LIE-209",
+    "連江縣北竿鄉": "LIE-210",
+    "連江縣莒光鄉": "LIE-211",
+    "連江縣東引鄉": "LIE-212",
+}
+
+TOWNSHIP_CODE_TO_NAME: Dict[str, str] = {code: name for name, code in TOWNSHIP_NAME_TO_CODE.items()}
+
+def resolve_county_from_township_name(township_name: str) -> str:
+    """
+    Best-effort derive county name from a full township name by prefix match on known counties.
+    Example: "臺北市中正區" -> "臺北市".
+    """
+    if not isinstance(township_name, str):
+        return ""
+    normalized = township_name.replace("台", "臺").strip()
+    # Prefer longer names first to avoid partial collisions
+    for county in sorted(COUNTY_NAME_TO_CODE.keys(), key=len, reverse=True):
+        if normalized.startswith(county):
+            return county
+    return ""
+
+
+
+==================== FILE: core\data_fetcher.py ====================
+
+import certifi
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from .. import config
+
+CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
+
+# API 端點設定
+CWA_COUNTY_FORECAST_ID = "F-C0032-001"    # 縣市天氣預報-一般天氣預報
+CWA_TOWNSHIP_CODES = {
+    # 北部地區
+    "宜蘭縣": "F-D0047-001",
+    "桃園市": "F-D0047-005",
+    "新竹縣": "F-D0047-009",
+    "苗栗縣": "F-D0047-013",
+    "彰化縣": "F-D0047-017",
+    "南投縣": "F-D0047-021",
+    "雲林縣": "F-D0047-025",
+    "嘉義縣": "F-D0047-029",
+    "屏東縣": "F-D0047-033",
+    "臺東縣": "F-D0047-037",
+    "花蓮縣": "F-D0047-041",
+    "澎湖縣": "F-D0047-045",
+    "基隆市": "F-D0047-049",
+    "新竹市": "F-D0047-053",
+    "嘉義市": "F-D0047-057",
+    "臺北市": "F-D0047-061",
+    "高雄市": "F-D0047-065",
+    "新北市": "F-D0047-069",
+    "臺中市": "F-D0047-073",
+    "臺南市": "F-D0047-077",
+    "連江縣": "F-D0047-081",
+    "金門縣": "F-D0047-085"
+}
+
+def create_session():
+    """Creates a requests session with retry mechanism."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[500, 502, 503, 504]
+    )
+    session.mount('http://', HTTPAdapter(max_retries=retry))
+    session.mount('https://', HTTPAdapter(max_retries=retry))
+    return session
+
+def get_cwa_township_forecast_data(city: str = None):
+    """
+    Fetches 36-hour weather forecast data for townships.
+    Args:
+        city: Optional city name. If provided, fetches data for that city only.
+              If None, fetches data for all cities.
+    """
+    session = create_session()
+    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
+    
+    if city:
+        dataset_id = CWA_TOWNSHIP_CODES.get(city)
+        if not dataset_id:
+            print(f"Invalid city name: {city}")
+            return None
+        urls = [(city, f"{CWA_API_URL}{dataset_id}")]
+    else:
+        # 如果沒有指定城市，獲取所有城市的資料
+        urls = [(city, f"{CWA_API_URL}{code}") for city, code in CWA_TOWNSHIP_CODES.items()]
+
+    all_data = []
+    for city_name, url in urls:
+        try:
+            print(f"Fetching CWA township forecast data for {city_name or 'all cities'}...")
+            response = session.get(
+                url, 
+                params={"Authorization": config.CWA_API_KEY},
+                verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data and 'records' in data:
+                if 'location' in data['records']:
+                    # 對應單一縣市的鄉鎮資料
+                    all_data.append({
+                        'locations': [{
+                            'location': data['records']['location']
+                        }]
+                    })
+                elif 'locations' in data['records']:
+                    # 對應多縣市的鄉鎮資料
+                    all_data.append(data['records'])
+            print(f"Successfully fetched CWA data for {city_name or 'all cities'}.")
+        except requests.exceptions.SSLError as e:
+            print(f"SSL error fetching CWA township data for {city_name}: {e}")
+            if getattr(config, "ALLOW_INSECURE_FALLBACK", False):
+                try:
+                    print(f"Retrying CWA township request for {city_name} with verify=False...")
+                    response = requests.get(url, params={"Authorization": config.CWA_API_KEY}, 
+                                         verify=False)
+                    response.raise_for_status()
+                    data = response.json()
+                    if data and 'records' in data:
+                        all_data.append(data['records'])
+                    print(f"Successfully fetched CWA data for {city_name} (insecure fallback).")
+                except requests.exceptions.RequestException as e2:
+                    print(f"Fallback request failed for {city_name}: {e2}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching CWA township data for {city_name}: {e}")
+    
+    if not all_data:
+        return None
+    
+    # 合併所有數據
+    return {
+        'records': {
+            'locations': all_data
+        }
+    }
+
+CWA_TOWNSHIP_FORECAST_ID = "F-D0047-093"  # 鄉鎮天氣預報
+
+
+
+def get_cwa_county_forecast_data():
+    """
+    Fetches 36-hour weather forecast data for all counties in Taiwan from the CWA API.
+    """
+    session = create_session()
+    url = f"{CWA_API_URL}{CWA_COUNTY_FORECAST_ID}"
+    params = {"Authorization": config.CWA_API_KEY}
+    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
+    
+    try:
+        print("Fetching CWA county forecast data...")
+        response = session.get(url, params=params, verify=verify)
+        response.raise_for_status()
+        print("Successfully fetched CWA county data.")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching CWA county data: {e}")
+        return None
+==================== FILE: core\image_analyzer.py ====================
+
+import io
+from typing import Optional, Tuple, Dict, List
+
+import requests
+from PIL import Image, ImageFilter, ImageOps
+
+try:
+    import pytesseract
+except ImportError:  # Optional at import time; function will raise if used without install
+    pytesseract = None  # type: ignore
+
+
+def _download_image(image_url: str) -> Image.Image:
+    from server import config
+    response = requests.get(image_url, timeout=15, verify=getattr(config, "REQUESTS_VERIFY_SSL", True))
+    response.raise_for_status()
+    return Image.open(io.BytesIO(response.content)).convert("RGB")
+
+
+def _ensure_tesseract_is_available() -> None:
+    if pytesseract is None:
+        raise RuntimeError(
+            "pytesseract is not installed. Please add 'pytesseract' to requirements and install Tesseract OCR runtime."
+        )
+
+
+def configure_tesseract_cmd(tesseract_cmd_path: Optional[str]) -> None:
+    """
+    Optionally configure pytesseract binary path at runtime (useful on Windows).
+    """
+    if pytesseract and tesseract_cmd_path:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd_path
+
+
+def extract_rain_probability_from_image(image_url: str, crop_box: Optional[Tuple[int, int, int, int]] = None) -> Optional[int]:
+    """
+    Download an image that contains rain probability text and OCR the value as an integer percentage.
+
+    Args:
+        image_url: URL of the image to analyze.
+        crop_box: Optional crop region (left, upper, right, lower) targeting the text area for OCR.
+
+    Returns:
+        An integer percentage (0-100) if parsed successfully, otherwise None.
+    """
+    _ensure_tesseract_is_available()
+
+    image = _download_image(image_url)
+    if crop_box:
+        image = image.crop(crop_box)
+
+    # Simple preprocessing for OCR: grayscale, increase contrast, sharpen
+    grayscale = ImageOps.grayscale(image)
+    enhanced = grayscale.filter(ImageFilter.SHARPEN)
+
+    ocr_text = pytesseract.image_to_string(enhanced)  # type: ignore[attr-defined]
+    # Extract first number sequence as percentage
+    digits = []
+    for ch in ocr_text:
+        if ch.isdigit():
+            digits.append(ch)
+        elif digits:
+            break
+
+    if not digits:
+        return None
+
+    try:
+        value = int("".join(digits))
+        if 0 <= value <= 100:
+            return value
+        return None
+    except ValueError:
+        return None
+
+
+def analyze_aqi_from_image(image_url: str, sample_box: Optional[Tuple[int, int, int, int]] = None) -> Optional[str]:
+    """
+    Infer AQI qualitative level by sampling color from a designated region.
+
+    The function samples the median color of the region and maps it to standard AQI color bins.
+
+    Args:
+        image_url: URL of the AQI map image.
+        sample_box: Optional region (left, upper, right, lower) focusing on the legend/target city color.
+
+    Returns:
+        One of: "Good", "Moderate", "Unhealthy for Sensitive", "Unhealthy", "Very Unhealthy", "Hazardous"; or None if unknown.
+    """
+    image = _download_image(image_url)
+    if sample_box:
+        image = image.crop(sample_box)
+
+    # Downscale and sample a grid to get a robust median color
+    small = image.resize((32, 32))
+    pixels = list(small.getdata())
+    r_values = sorted(p[0] for p in pixels)
+    g_values = sorted(p[1] for p in pixels)
+    b_values = sorted(p[2] for p in pixels)
+    median = (
+        r_values[len(r_values) // 2],
+        g_values[len(g_values) // 2],
+        b_values[len(b_values) // 2],
+    )
+
+    return _map_color_to_aqi(median)
+
+
+def _map_color_to_aqi(rgb: Tuple[int, int, int]) -> Optional[str]:
+    r, g, b = rgb
+
+    # Rough color mapping consistent with US EPA AQI colors
+    # Good:      Green (~(0-100, 150-255, 0-100))
+    # Moderate:  Yellow (~(150-255, 150-255, 0-80))
+    # USG:       Orange (~(200-255, 120-180, 0-60))
+    # Unhealthy: Red (~(180-255, 0-100, 0-100))
+    # Very Unhealthy: Purple (~(150-220, 0-80, 150-220))
+    # Hazardous: Maroon (~(100-180, 0-60, 0-60))
+
+    if g > 150 and r < 120 and b < 120:
+        return "Good"
+    if r > 170 and g > 170 and b < 90:
+        return "Moderate"
+    if r > 200 and 110 < g < 190 and b < 80:
+        return "Unhealthy for Sensitive"
+    if r > 180 and g < 110 and b < 110:
+        return "Unhealthy"
+    if r > 140 and b > 140 and g < 100:
+        return "Very Unhealthy"
+    if r > 100 and g < 70 and b < 70:
+        return "Hazardous"
+    return None
+
+
+def _closest_color(value: Tuple[int, int, int], palette: List[Tuple[int, int, int]]) -> Tuple[int, int, int]:
+    vr, vg, vb = value
+    best = None
+    best_dist = 1e9
+    for pr, pg, pb in palette:
+        d = (vr - pr) ** 2 + (vg - pg) ** 2 + (vb - pb) ** 2
+        if d < best_dist:
+            best_dist = d
+            best = (pr, pg, pb)
+    assert best is not None
+    return best
+
+
+def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[float]:
+    """
+    Estimate rainfall intensity (mm/hr) by sampling color at a given pixel and mapping via QPF_COLOR_MAP.
+    """
+    from server import config
+    image = _download_image(image_url)
+    x, y = sample_xy
+    if x < 0 or y < 0 or x >= image.width or y >= image.height:
+        return None
+    rgb = image.getpixel((x, y))[:3] if hasattr(image.getpixel((x, y)), '__iter__') else image.getpixel((x, y))
+    palette = list(config.QPF_COLOR_MAP.keys())
+    nearest = _closest_color(rgb, palette)
+    return config.QPF_COLOR_MAP.get(nearest)
+
+
+
+==================== FILE: core\image_url_resolver.py ====================
+
+from datetime import datetime, timedelta
+from typing import Iterable, List, Optional
+
+import requests
+
+
+def _is_image_url(url: str, timeout_seconds: int = 10) -> bool:
+    from server import config
+    try:
+        resp = requests.head(
+            url,
+            timeout=timeout_seconds,
+            allow_redirects=True,
+            verify=getattr(config, "REQUESTS_VERIFY_SSL", True),
+        )
+        if resp.status_code == 200 and 'image' in (resp.headers.get('Content-Type') or '').lower():
+            return True
+        # Some servers do not support HEAD properly; try GET with small timeout
+        resp = requests.get(
+            url,
+            timeout=timeout_seconds,
+            stream=True,
+            verify=getattr(config, "REQUESTS_VERIFY_SSL", True),
+        )
+        content_type = (resp.headers.get('Content-Type') or '').lower()
+        return resp.status_code == 200 and 'image' in content_type
+    except Exception:
+        return False
+
+
+def _try_patterns(patterns: Iterable[str], times: Iterable[datetime]) -> Optional[str]:
+    for ts in times:
+        for pattern in patterns:
+            candidate = ts.strftime(pattern)
+            if _is_image_url(candidate):
+                return candidate
+    return None
+
+
+def resolve_latest_url(patterns: List[str], now: Optional[datetime] = None, hours_back: int = 36) -> Optional[str]:
+    """
+    Try multiple timestamped URL patterns and return the first that exists.
+    """
+    if not patterns:
+        return None
+    base_time = now or datetime.utcnow()
+    times = [base_time - timedelta(hours=h) for h in range(hours_back + 1)]
+    return _try_patterns(patterns, times)
+
+
+
+==================== FILE: core\json_generator.py ====================
+
+
+import datetime
+from server.scheduler import jobs
+from server.core import codes
+
+def generate_json_output():
+    """
+    Generates the final JSON output by combining CWA and AQI data.
+    """
+    update_time = datetime.datetime.now().isoformat()
+    
+    cwa_county_data = jobs.get_cached_cwa_county_data()
+    cwa_township_data = jobs.get_cached_cwa_township_data()
+    image_metrics = jobs.get_cached_image_metrics()
+    
+    if not cwa_county_data or not cwa_township_data:
+        return None
+        
+    final_json = {
+        "update_time": update_time,
+    }
+    
+    # Helper to extract the first parameter name from a weather element
+    def get_weather_element(elements, element_name):
+        for element in elements:
+            if element.get('elementName') == element_name:
+                time_entry = element.get('time', [{}])[0]
+                parameter = time_entry.get('parameter', {})
+                return parameter.get('parameterName')
+        return None
+
+    # Helper to extract rain probability from township data
+    def get_town_rain_prob(town_weather_element, pop_element_name):
+        for element in town_weather_element:
+            if element.get('elementName') == pop_element_name:
+                time_entry = element.get('time', [{}])[0]
+                if 'elementValue' in time_entry:
+                    return time_entry['elementValue'][0].get('value')
+        return None
+
+    # Process county data
+    for county in cwa_county_data.get('records', {}).get('location', []):
+        county_name = county.get('locationName')
+        county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
+        
+        if not county_code:
+            continue
+            
+        weather_elements = county.get('weatherElement', [])
+        
+        # Calculate average temperature
+        min_temp_str = get_weather_element(weather_elements, 'MinT')
+        max_temp_str = get_weather_element(weather_elements, 'MaxT')
+        
+        avg_temp = None
+        if min_temp_str and max_temp_str:
+            try:
+                avg_temp = (float(min_temp_str) + float(max_temp_str)) / 2
+            except (ValueError, TypeError):
+                avg_temp = None
+
+        final_json[county_code] = {
+            "name": county_name,
+            "temp": avg_temp,
+            "weather": get_weather_element(weather_elements, 'Wx'),
+            "rain_6h": None, # Placeholder, will be populated from township data
+            "rain_12h": None, # Placeholder, will be populated from township data
+            "aqi": image_metrics.get('aqi_level') if image_metrics else None,
+            "towns": {}
+        }
+
+    # Process township data
+    if cwa_township_data.get('records'):
+        locations = cwa_township_data['records'].get('locations', [])
+        for county_towns in locations:
+            county_name = county_towns.get('locationsName')
+            county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
+
+            if not county_code or county_code not in final_json:
+                continue
+
+            town_rain_6h = []
+            town_rain_12h = []
+
+            for town in county_towns.get('location', []):
+                town_name = town.get('locationName')
+                town_code = codes.TOWNSHIP_NAME_TO_CODE.get(f"{county_name}{town_name}")
+                
+                if not town_code:
+                    continue
+
+                weather_element = town.get('weatherElement', [])
+                rain_6h_str = get_town_rain_prob(weather_element, '6小時降雨機率')
+                rain_12h_str = get_town_rain_prob(weather_element, '12小時降雨機率')
+
+                rain_6h = int(rain_6h_str) if rain_6h_str and rain_6h_str.isdigit() else None
+                rain_12h = int(rain_12h_str) if rain_12h_str and rain_12h_str.isdigit() else None
+                
+                if rain_6h is not None:
+                    town_rain_6h.append(rain_6h)
+                
+                if rain_12h is not None:
+                    town_rain_12h.append(rain_12h)
+
+                final_json[county_code]['towns'][town_code] = {
+                    "rain_6h": rain_6h,
+                    "rain_12h": rain_12h,
+                }
+            
+            # Calculate average rain probability for the county
+            if town_rain_6h:
+                final_json[county_code]['rain_6h'] = sum(town_rain_6h) / len(town_rain_6h)
+            if town_rain_12h:
+                final_json[county_code]['rain_12h'] = sum(town_rain_12h) / len(town_rain_12h)
+
+    return final_json
+
+==================== FILE: core\__init__.py ====================
+
+
+==================== FILE: scheduler\jobs.py ====================
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from server.core import data_fetcher, calculation, json_generator
+from server.core import image_analyzer
+from server.core import image_url_resolver
+from server import config
+from server.services import fcm_sender, discord_sender
+import asyncio
+
+scheduler = AsyncIOScheduler()
+
+# --- Data Cache ---
+# 初始化全局變數
+if 'CACHED_WEATHER_DATA' not in globals():
+    CACHED_WEATHER_DATA = {
+        'county_weather': {},      # 縣市天氣資料
+        'township_weather': {},    # 鄉鎮天氣資料
+        'qpf_data': {},           # 降雨強度資料
+        'aqi_data': {},           # 空氣品質資料
+        'update_time': None       # 最後更新時間
+    }
+
+if 'CACHED_CWA_TOWNSHIP_DATA' not in globals():
+    CACHED_CWA_TOWNSHIP_DATA = None
+
+if 'CACHED_TOWNSHIP_MAP' not in globals():
+    CACHED_TOWNSHIP_MAP = {}
+
+if 'CACHED_IMAGE_METRICS' not in globals():
+    CACHED_IMAGE_METRICS = {}
+
+# 更新時間間隔設定（6點和12點）
+UPDATE_HOURS = [6, 12]
+# --- End of Cache ---
+
+def _normalize_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+    # Normalize common variants and whitespace
+    return name.replace("台", "臺").replace(" ", "").strip()
+
+def _iter_all_locations(records: object):
+    # Yield all location dicts from various possible shapes
+    if not isinstance(records, dict):
+        return
+    # Case 1: records.location is a list
+    loc_list = records.get('location') if isinstance(records, dict) else None
+    if isinstance(loc_list, list):
+        for loc in loc_list:
+            if isinstance(loc, dict):
+                yield loc
+    # Case 2: records.locations is a list of groups, each with group.location list
+    groups = records.get('locations') if isinstance(records, dict) else None
+    if isinstance(groups, list):
+        for group in groups:
+            if isinstance(group, dict):
+                for loc in group.get('location', []) if isinstance(group.get('location'), list) else []:
+                    if isinstance(loc, dict):
+                        # Some structures have an extra nested 'location' list under each county
+                        inner = loc.get('location')
+                        if isinstance(inner, list):
+                            for inner_loc in inner:
+                                if isinstance(inner_loc, dict):
+                                    yield inner_loc
+                        else:
+                            yield loc
+    # Case 3: records.locations is a dict with key 'location' list
+    if isinstance(groups, dict):
+        inner_locs = groups.get('location')
+        if isinstance(inner_locs, list):
+            for loc in inner_locs:
+                if isinstance(loc, dict):
+                    inner = loc.get('location')
+                    if isinstance(inner, list):
+                        for inner_loc in inner:
+                            if isinstance(inner_loc, dict):
+                                yield inner_loc
+                    else:
+                        yield loc
+    # Case 4: Capitalized structure: records['Locations']['Location'] list
+    cap_groups = records.get('Locations')
+    if isinstance(cap_groups, dict):
+        cap_inner = cap_groups.get('Location')
+        if isinstance(cap_inner, list):
+            for loc in cap_inner:
+                if isinstance(loc, dict):
+                    inner = loc.get('location') or loc.get('Location')
+                    if isinstance(inner, list):
+                        for inner_loc in inner:
+                            if isinstance(inner_loc, dict):
+                                yield inner_loc
+                    else:
+                        yield loc
+    if isinstance(cap_groups, list):
+        for group in cap_groups:
+            if isinstance(group, dict):
+                # group keys example: 'DatasetDescription', 'LocationsName', 'Dataid', 'Location'
+                cap_inner = group.get('Location')
+                if isinstance(cap_inner, list):
+                    for loc in cap_inner:
+                        if isinstance(loc, dict):
+                            inner = loc.get('location') or loc.get('Location')
+                            if isinstance(inner, list):
+                                for inner_loc in inner:
+                                    if isinstance(inner_loc, dict):
+                                        yield inner_loc
+                            else:
+                                yield loc
+
+async def _fetch_weather_data(county_data=None):
+    """Fetches both county and township level weather data."""
+    if county_data is None:
+        # 如果沒有提供縣市資料，則獲取它
+        county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
+    
+    # 獲取所有縣市的鄉鎮級資料
+    township_data_tasks = []
+    for city in data_fetcher.CWA_TOWNSHIP_CODES.keys():
+        township_data_tasks.append(
+            asyncio.to_thread(data_fetcher.get_cwa_township_forecast_data, city)
+        )
+    
+    # 並行獲取所有鄉鎮資料
+    township_data_results = await asyncio.gather(*township_data_tasks)
+    
+    # 合併所有鄉鎮資料
+    all_township_data = {
+        'records': {
+            'locations': []
+        }
+    }
+    for data in township_data_results:
+        if data and 'records' in data and 'locations' in data['records']:
+            all_township_data['records']['locations'].extend(data['records']['locations'])
+    
+    # 處理縣市資料
+    county_weather = {}
+    if county_data and 'records' in county_data:
+        for location in county_data['records'].get('location', []):
+            county_name = location.get('locationName')
+            if county_name:
+                weather_elements = {}
+                for element in location.get('weatherElement', []):
+                    name = element.get('elementName')
+                    if name and element.get('time'):
+                        param = element['time'][0].get('parameter', {})
+                        weather_elements[name] = param.get('parameterName')
+                
+                county_weather[county_name] = {
+                    'temperature': weather_elements.get('T'),
+                    'weather_description': weather_elements.get('Wx'),
+                    'pop': weather_elements.get('PoP')
+                }
+    
+    # 處理鄉鎮資料
+    township_weather = {}
+    if all_township_data and 'records' in all_township_data:
+        for locations in all_township_data['records'].get('locations', []):
+            for location in locations.get('location', []):
+                township_name = location.get('locationName')
+                if township_name:
+                    # 從 locationName 取得縣市名稱和鄉鎮名稱
+                    parts = township_name.split('區') if '區' in township_name else township_name.split('鎮') if '鎮' in township_name else township_name.split('市') if '市' in township_name else [township_name]
+                    if len(parts) >= 2:
+                        county_name = parts[0]
+                        township_name = parts[1]
+                        full_name = f"{county_name}{township_name}"
+                    else:
+                        full_name = township_name
+                    weather_elements = {}
+                    for element in location.get('weatherElement', []):
+                        name = element.get('elementName')
+                        if name and element.get('time'):
+                            values = element['time'][0].get('elementValue', [])
+                            if values:
+                                weather_elements[name] = values[0].get('value')
+                    
+                    township_weather[full_name] = {
+                        'pop6h': weather_elements.get('6小時降雨機率'),
+                        'pop12h': weather_elements.get('12小時降雨機率')
+                    }
+    
+    return county_weather, township_weather, all_township_data
+
+async def fetch_data_job():
+    """
+    Scheduled job to fetch and cache weather data.
+    """
+    print("Running scheduled job: fetch_data_job")
+    global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP
+
+    try:
+        # 獲取API數據
+        county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
+        weather_data = await _fetch_weather_data(county_data)
+        
+        if not weather_data:
+            print("Failed to fetch weather data")
+            return
+        
+        county_weather, township_weather, all_township_data = weather_data
+        
+        # 更新快取資料
+        CACHED_CWA_TOWNSHIP_DATA = all_township_data
+        CACHED_TOWNSHIP_MAP = township_weather
+        CACHED_WEATHER_DATA.update({
+                'county_weather': county_weather,
+                'township_weather': township_weather
+            })
+    except Exception as e:
+        print(f"Error in fetch_data_job while fetching weather data: {e}")
+        return
+    
+    # 分析圖片數據
+    pop12_url = await asyncio.to_thread(
+        image_url_resolver.resolve_latest_url,
+        config.POP12_URL_PATTERNS
+    )
+    pop6_url = await asyncio.to_thread(
+        image_url_resolver.resolve_latest_url,
+        config.POP6_URL_PATTERNS
+    )
+    
+    # 獲取降雨強度
+    qpf_data = {}
+    if pop12_url or pop6_url:
+        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
+            qpf12 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image,
+                pop12_url,
+                coords
+            ) if pop12_url else None
+            
+            qpf6 = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image,
+                pop6_url,
+                coords
+            ) if pop6_url else None
+            
+            qpf_data[county_name] = {
+                'qpf12': qpf12,
+                'qpf6': qpf6
+            }
+    
+    # 獲取空氣品質數據
+    aqi_url = await asyncio.to_thread(
+        image_url_resolver.resolve_latest_url,
+        config.AQI_URL_PATTERNS
+    )
+    
+    aqi_data = {}
+    if aqi_url:
+        for county_name, coords in config.IMAGE_SAMPLE_COORDS.items():
+            aqi = await asyncio.to_thread(
+                image_analyzer.analyze_aqi_from_image,
+                aqi_url,
+                coords
+            )
+            if aqi:
+                aqi_data[county_name] = aqi
+
+    # Image-derived metrics
+    try:
+        if config.TESSERACT_CMD:
+            image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
+        # Resolve static or dynamic URLs for PoP12 / PoP6 (network I/O -> thread)
+        pop12_resolved = await asyncio.to_thread(
+            image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
+        )
+        pop6_resolved = await asyncio.to_thread(
+            image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS
+        )
+        pop12_url = (
+            config.POP12_IMAGE_URL or pop12_resolved or config.RAIN_PROBABILITY_IMAGE_URL
+        )
+        pop6_url = (
+            config.POP6_IMAGE_URL or pop6_resolved or config.RAIN_PROBABILITY_IMAGE_URL
+        )
+
+        # Backward-compatible single PoP (if both None later)
+        single_pop_url = config.RAIN_PROBABILITY_IMAGE_URL
+
+        pop12 = await asyncio.to_thread(
+            image_analyzer.extract_rain_probability_from_image,
+            pop12_url,
+            (config.POP12_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
+        ) if pop12_url else None
+        pop6 = await asyncio.to_thread(
+            image_analyzer.extract_rain_probability_from_image,
+            pop6_url,
+            (config.POP6_CROP_BOX or config.RAIN_PROBABILITY_CROP_BOX),
+        ) if pop6_url else None
+
+        pop_single = await asyncio.to_thread(
+            image_analyzer.extract_rain_probability_from_image,
+            single_pop_url,
+            config.RAIN_PROBABILITY_CROP_BOX,
+        ) if single_pop_url and pop12 is None and pop6 is None else None
+        # Resolve AQI URL (static or dynamic)
+        aqi_resolved = await asyncio.to_thread(
+            image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
+        )
+        aqi_url = (config.AQI_IMAGE_URL or aqi_resolved)
+        aqi = await asyncio.to_thread(
+            image_analyzer.analyze_aqi_from_image,
+            aqi_url,
+            config.AQI_SAMPLE_BOX,
+        ) if aqi_url else None
+
+        # QPF per-county cache: compute for all configured counties
+        qpf_cache_by_county = {}
+        if pop12_url or pop6_url:
+            for county, sample_xy in (config.IMAGE_SAMPLE_COORDS or {}).items():
+                if not sample_xy:
+                    continue
+                q12 = await asyncio.to_thread(
+                    image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
+                ) if pop12_url else None
+                q6 = await asyncio.to_thread(
+                    image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
+                ) if pop6_url else None
+                qpf_cache_by_county[county] = {
+                    "qpf12_mm_per_hr": q12,
+                    "qpf6_mm_per_hr": q6,
+                }
+        CACHED_IMAGE_METRICS = {
+            "rain_probability_percent": pop_single,
+            "pop12_percent": pop12 if pop12 is not None else pop_single,
+            "pop6_percent": pop6 if pop6 is not None else pop_single,
+            "aqi_level": aqi,
+            # Not county-specific here; per-county QPF exposed via getter below
+            "qpf12_mm_per_hr": None,
+            "qpf6_mm_per_hr": None,
+        }
+        # Store per-county QPF cache on module (simple global)
+        global QPF_CACHE_BY_COUNTY
+        QPF_CACHE_BY_COUNTY = qpf_cache_by_county
+    except Exception as e:
+        print(f"Error analyzing images: {e}")
+    
+    if CACHED_CWA_TOWNSHIP_DATA:
+        # --- Rebuild township map ---
+        new_township_map = {}
+        try:
+            records = CACHED_CWA_TOWNSHIP_DATA.get('records', {})
+            locations = records.get('Locations', [])
+            
+            if isinstance(locations, list) and locations:
+                # 獲取主要的位置組
+                main_location = locations[0]
+                if isinstance(main_location, dict):
+                    # 取得所有縣市
+                    counties = main_location.get('Location', [])
+                    print(f"Found {len(counties)} counties/cities")
+                    
+                    for county in counties:
+                        if isinstance(county, dict):
+                            county_name = county.get('LocationName')
+                            weather_elements = county.get('WeatherElement', [])
+                            
+                            print(f"Processing {county_name}")
+                            
+                            # 為每個縣市創建基本天氣資料結構
+                            for element in weather_elements:
+                                element_name = element.get('ElementName')
+                                time_array = element.get('Time', [])
+                                if time_array:
+                                    first_time = time_array[0]
+                                    element_values = first_time.get('ElementValue', [])
+                                    if element_values:
+                                        value = element_values[0].get('value')
+                                        # 根據縣市名稱和行政區建立完整地名
+                                        if county_name:
+                                            full_name = county_name
+                                            new_township_map[_normalize_name(full_name)] = county
+            
+            print(f"Building township map: found {len(new_township_map)} townships")
+            CACHED_TOWNSHIP_MAP = new_township_map
+            
+            if not CACHED_TOWNSHIP_MAP:
+                print("Warning: Township map was built but is empty. Check CWA data structure again.")
+            else:
+                print(f"Successfully built township map with {len(CACHED_TOWNSHIP_MAP)} entries.")
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Error building township map due to unexpected data structure: {e}")
+
+        print("Scheduled job finished. CWA data has been cached.")
+        # After fetching data, generate the final JSON output
+        global CACHED_FINAL_JSON
+        CACHED_FINAL_JSON = json_generator.generate_json_output()
+        # After fetching data, check if any notifications need to be sent.
+        await check_and_send_notifications()
+    else:
+        print("Scheduled job finished. CWA data fetching failed.")
+
+async def check_and_send_notifications():
+    """
+    Checks for notification conditions based on the cached CWA data.
+    """
+    print("Checking for notification conditions...")
+    # Example: A user is subscribed to notifications for "臺北市中正區"
+    user_township = "臺北市中正區"
+    user_device_token = "DEVICE_TOKEN_HERE" # This would come from a database
+
+    # This part will be updated to use the new map via the calculation function
+    forecast = calculation.get_forecast_for_township(user_township, CACHED_TOWNSHIP_MAP)
+
+    if forecast and forecast["cwa_forecast"]["chance_of_rain_12h"]:
+        pop_value_str = forecast["cwa_forecast"]["chance_of_rain_12h"]
+        if pop_value_str and pop_value_str.isdigit():
+            pop_value = int(pop_value_str)
+            if pop_value > 50: # Condition: chance of rain > 50%
+                message = f"Weather Alert for {user_township}: Chance of rain is {pop_value}% in the next 12 hours."
+                print(message)
+                
+                # Send to Discord
+                discord_sender.send_to_discord(message)
+
+                # Send FCM push notification (placeholder)
+                # fcm_sender.send_notification(
+                #      title=f"{user_township} Weather Alert",
+                #      body=message,
+                #      token=user_device_token
+                # )
+
+# Schedule the data fetching job to run twice daily at 06:00 and 12:00
+scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=0)
+
+# --- Getter functions for API endpoints to access cached data ---
+def get_cached_weather_data():
+    """獲取快取的天氣資料"""
+    return CACHED_WEATHER_DATA
+
+def get_county_weather(county_name: str):
+    """獲取指定縣市的天氣資料"""
+    return CACHED_WEATHER_DATA['county_weather'].get(county_name)
+
+def get_township_weather(township_name: str):
+    """獲取指定鄉鎮的天氣資料"""
+    return CACHED_WEATHER_DATA['township_weather'].get(township_name)
+
+def get_qpf_data(county_name: str):
+    """獲取指定縣市的降雨強度資料"""
+    return CACHED_WEATHER_DATA['qpf_data'].get(county_name)
+
+def get_aqi_data(county_name: str):
+    """獲取指定縣市的空氣品質資料"""
+    return CACHED_WEATHER_DATA['aqi_data'].get(county_name)
+
+def get_last_update_time():
+    """獲取資料最後更新時間"""
+    return CACHED_WEATHER_DATA['update_time']
+
+# Per-county QPF getters
+QPF_CACHE_BY_COUNTY = {}
+def get_qpf_for_county(county_name: str):
+    return QPF_CACHE_BY_COUNTY.get(county_name)
+==================== FILE: scheduler\__init__.py ====================
+
+
+==================== FILE: services\discord_sender.py ====================
+
+import requests
+from server import config
+
+def send_to_discord(message: str):
+    """
+    Sends a message to the Discord webhook URL specified in the config.
+
+    Args:
+        message: The string message to send.
+    """
+    if not config.DISCORD_WEBHOOK_URL or "discord.com" not in config.DISCORD_WEBHOOK_URL:
+        # print("Discord webhook URL not configured or invalid. Skipping.")
+        return
+
+    payload = {"content": message}
+    
+    try:
+        response = requests.post(config.DISCORD_WEBHOOK_URL, json=payload)
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        print(f"Successfully sent message to Discord.")
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending message to Discord: {e}")
+
+==================== FILE: services\fcm_sender.py ====================
+
+import firebase_admin
+from firebase_admin import credentials, messaging
+from .. import config
+
+# Initialize Firebase Admin SDK
+try:
+    cred = credentials.Certificate(config.FIREBASE_SERVICE_ACCOUNT_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+    print("Firebase Admin SDK initialized successfully.")
+except Exception as e:
+    print(f"Error initializing Firebase Admin SDK: {e}")
+    print("Please ensure the service account key path in config.py is correct.")
+
+def send_notification(title: str, body: str, token: str):
+    """
+    Sends a single notification to a specific device.
+    """
+    if not firebase_admin._apps:
+        print("Firebase Admin SDK not initialized. Cannot send notification.")
+        return
+
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title=title,
+            body=body,
+        ),
+        token=token,
+    )
+
+    try:
+        response = messaging.send(message)
+        print('Successfully sent message:', response)
+    except Exception as e:
+        print('Error sending message:', e)
+
+==================== FILE: services\__init__.py ====================
+

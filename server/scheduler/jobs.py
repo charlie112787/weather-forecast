@@ -5,6 +5,9 @@ from core import image_url_resolver
 import config
 from services import fcm_sender, discord_sender
 import asyncio
+import datetime
+import os
+import json
 
 scheduler = AsyncIOScheduler()
 
@@ -41,10 +44,8 @@ def _normalize_name(name: str) -> str:
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
     if county_data is None:
-        # 如果沒有提供縣市資料，則獲取它
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
 
-    # --- DEBUGGING: Inspect raw county_data ---
     if county_data and isinstance(county_data, dict):
         print(f"Debug: county_data keys: {county_data.keys()}")
         records = county_data.get('records', {})
@@ -52,69 +53,56 @@ async def _fetch_weather_data(county_data=None):
         print(f"Debug: Found {len(locations)} locations in county_data.")
     else:
         print("Debug: county_data is None or not a dict.")
-    # --- END DEBUGGING ---
 
-    # 獲取所有縣市的鄉鎮級資料
+    cities = list(data_fetcher.CWA_TOWNSHIP_CODES.keys())
     township_data_tasks = []
-    for city in data_fetcher.CWA_TOWNSHIP_CODES.keys():
+    for city in cities:
         township_data_tasks.append(
             asyncio.to_thread(data_fetcher.get_cwa_township_forecast_data, city)
         )
     
-    # 並行獲取所有鄉鎮資料
     township_data_results = await asyncio.gather(*township_data_tasks)
     
-    # 合併所有鄉鎮資料
-    print(f"Debug: Merging {len(township_data_results)} results from township API calls.")
     all_locations = []
+    township_weather = {}
     for i, result in enumerate(township_data_results):
-        if result and isinstance(result, dict) and result.get('records') and isinstance(result['records'], dict) and result['records'].get('location'):
-            all_locations.extend(result['records']['location'])
-        else:
-            # Log the unexpected structure
-            print(f"Debug: Result {i} has an unexpected structure.")
-            if result and isinstance(result, dict):
-                print(f"Debug: Result {i} keys: {result.keys()}")
-                if 'records' in result and isinstance(result['records'], dict):
-                    print(f"Debug: Result {i}['records'] keys: {result['records'].keys()}")
-            else:
-                print(f"Debug: Result {i} is not a valid dictionary: {result}")
+        city_name = cities[i]
+        if result and isinstance(result, dict) and result.get('records') and result['records'].get('location'):
+            locations = result['records']['location']
+            all_locations.extend(locations)
+            for location in locations:
+                township_name = location.get('LocationName')
+                if township_name:
+                    full_name = f"{city_name}{township_name}"
+                    normalized_name = _normalize_name(full_name)
+                    township_weather[normalized_name] = location
 
-    print(f"Debug: Total locations collected after merge: {len(all_locations)}")
     all_township_data = {
         'records': {
             'location': all_locations
         }
     }
     
-    # 處理縣市資料
     county_weather = {}
     if county_data and 'records' in county_data:
         for location in county_data['records'].get('location', []):
             county_name = location.get('locationName')
-            print(f"Debug: Processing county: {county_name}")
             if county_name:
                 weather_elements = {}
+                min_temp, max_temp = None, None
                 for element in location.get('weatherElement', []):
                     name = element.get('elementName')
                     if name and element.get('time'):
                         param = element['time'][0].get('parameter', {})
                         weather_elements[name] = param.get('parameterName')
+                        if name == 'MinT':
+                            min_temp = int(param.get('parameterName'))
+                        if name == 'MaxT':
+                            max_temp = int(param.get('parameterName'))
+                if min_temp is not None and max_temp is not None:
+                    weather_elements['T'] = (min_temp + max_temp) // 2
                 
-                county_weather[county_name] = {
-                    'temperature': weather_elements.get('T'),
-                    'weather_description': weather_elements.get('Wx'),
-                    'pop': weather_elements.get('PoP')
-                }
-    
-    # 處理鄉鎮資料
-    township_weather = {}
-    if all_township_data and all_township_data.get('records') and all_township_data['records'].get('location'):
-        for location in all_township_data['records']['location']:
-            township_name = location.get('locationName')
-            if township_name:
-                # Store the entire location object, as this is what calculation.py expects
-                township_weather[_normalize_name(township_name)] = location
+                county_weather[county_name] = weather_elements
     
     return county_weather, township_weather, all_township_data
 
@@ -123,36 +111,33 @@ async def fetch_data_job():
     Scheduled job to fetch and cache weather data.
     """
     print("Running scheduled job: fetch_data_job")
-    global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP
+    global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP, CACHED_FINAL_JSON
 
     try:
-        # 獲取API數據
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
         weather_data = await _fetch_weather_data(county_data)
         
-        if not weather_data:
-            print("Failed to fetch weather data")
+        if not weather_data or not weather_data[1]:
+            print("Failed to fetch weather data or township_weather is empty")
             return
         
         county_weather, township_weather, all_township_data = weather_data
         
-        # 更新快取資料
         CACHED_CWA_TOWNSHIP_DATA = all_township_data
         CACHED_TOWNSHIP_MAP = township_weather
         CACHED_WEATHER_DATA.update({
                 'county_weather': county_weather,
-                'township_weather': township_weather
+                'township_weather': township_weather,
+                'update_time': datetime.datetime.now().isoformat()
             })
     except Exception as e:
         print(f"Error in fetch_data_job while fetching weather data: {e}")
         return
     
-    # 分析圖片數據
     try:
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
 
-        # Resolve image URLs
         qpf12_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
         )
@@ -163,7 +148,6 @@ async def fetch_data_job():
             image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
         )
 
-        # --- Consolidated Image Metric Analysis ---
         image_metrics = {}
         if not (config.IMAGE_SAMPLE_COORDS):
              print("Warning: IMAGE_SAMPLE_COORDS not configured in config.py. Skipping image analysis.")
@@ -173,7 +157,6 @@ async def fetch_data_job():
             if not sample_xy:
                 continue
 
-            # Analyze QPF (Rainfall Intensity)
             qpf12_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
             ) if qpf12_url else None
@@ -181,7 +164,6 @@ async def fetch_data_job():
                 image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
             ) if qpf6_url else None
 
-            # Analyze AQI
             aqi_level = None
             if aqi_url:
                 box_size = 10
@@ -199,12 +181,10 @@ async def fetch_data_job():
                 "aqi_level": aqi_level,
             }
         
-        # --- NCDR Daily Rain Analysis ---
         try:
             print("Starting NCDR daily rain analysis...")
             daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
             if daily_rain_url and image_url_resolver._is_image_url(daily_rain_url):
-                # Analyze this single image for all counties
                 daily_rain_tasks = {}
                 for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
                     if sample_xy:
@@ -215,7 +195,6 @@ async def fetch_data_job():
                 daily_rain_results = await asyncio.gather(*daily_rain_tasks.values())
                 county_results = dict(zip(daily_rain_tasks.keys(), daily_rain_results))
 
-                # Store the results
                 for county, data in county_results.items():
                     if county in image_metrics and data:
                         image_metrics[county]['ncdr_daily_rain'] = data
@@ -224,21 +203,17 @@ async def fetch_data_job():
         except Exception as e:
             print(f"Error during NCDR daily rain analysis: {e}")
 
-        # --- NCDR Nowcast Analysis ---
         try:
             print("Starting NCDR nowcast analysis...")
-            # 1. Find the latest nowcast series
             latest_f01h_url = await asyncio.to_thread(
                 image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN
             )
 
             if latest_f01h_url:
                 print(f"Found latest NCDR nowcast series: {latest_f01h_url}")
-                # 2. Generate all 12 URLs for the series
                 base_url = latest_f01h_url.rsplit('_', 1)[0]
                 nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
 
-                # 3. Analyze all 12 images for each county
                 for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
                     if not sample_xy:
                         continue
@@ -251,7 +226,6 @@ async def fetch_data_job():
                     
                     hourly_forecasts = await asyncio.gather(*nowcast_tasks)
 
-                    # 4. Store the 12-hour forecast data
                     if county in image_metrics:
                         image_metrics[county]['ncdr_nowcast'] = [
                             {"hour": i + 1, **(data or {})}
@@ -262,14 +236,9 @@ async def fetch_data_job():
         except Exception as e:
             print(f"Error during NCDR nowcast analysis: {e}")
 
-        # Update the single, consolidated cache for image metrics
         CACHED_IMAGE_METRICS.clear()
         CACHED_IMAGE_METRICS.update(image_metrics)
         
-        # Deprecated caches are no longer updated
-        # CACHED_WEATHER_DATA.update({ 'qpf_data': {}, 'aqi_data': {} })
-        # global QPF_CACHE_BY_COUNTY; QPF_CACHE_BY_COUNTY = {}
-
         print(f"Image analysis complete. Metrics cached for {len(image_metrics)} counties.")
 
     except Exception as e:
@@ -277,52 +246,42 @@ async def fetch_data_job():
 
     if CACHED_CWA_TOWNSHIP_DATA:
         print("Scheduled job finished. CWA data has been cached.")
-        # After fetching data, generate the final JSON output
-        global CACHED_FINAL_JSON
         CACHED_FINAL_JSON = json_generator.generate_json_output()
         print(f"Debug: township_weather map contains {len(township_weather)} entries.")
-        # --- Final Step: Generate Unified JSON and Upload to Firebase ---
-        print("Proceeding to generate and upload unified JSON file.")
-        unified_data = json_generator.generate_unified_json()
         
-        if unified_data:
-            import json
-            import os
-            from services import firebase_uploader
+        if CACHED_WEATHER_DATA['township_weather']:
+            print("Proceeding to generate and upload unified JSON file.")
+            unified_data = json_generator.generate_unified_json()
+        
+            if unified_data:
+                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
+                os.makedirs(temp_dir, exist_ok=True)
+                local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
+                destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
 
-            # Define file paths
-            temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
-            os.makedirs(temp_dir, exist_ok=True)
-            local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
-            destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
+                try:
+                    with open(local_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(unified_data, f, ensure_ascii=False, indent=4)
+                    print(f"Successfully saved unified data to {local_file_path}")
 
-            # Save data to local file
-            try:
-                with open(local_file_path, 'w', encoding='utf-8') as f:
-                    json.dump(unified_data, f, ensure_ascii=False, indent=4)
-                print(f"Successfully saved unified data to {local_file_path}")
-
-                # Upload to Firebase
-                if os.getenv('FIREBASE_STORAGE_BUCKET'):
-                    upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
-                    if upload_url:
-                        print("Firebase upload successful.")
+                    if os.getenv('FIREBASE_STORAGE_BUCKET'):
+                        upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
+                        if upload_url:
+                            print("Firebase upload successful.")
+                        else:
+                            print("Firebase upload failed.")
                     else:
-                        print("Firebase upload failed.")
-                else:
-                    print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
+                        print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
 
-            except Exception as e:
-                print(f"Error during file generation or upload: {e}")
-            finally:
-                # Clean up local file
-                if os.path.exists(local_file_path):
-                    os.remove(local_file_path)
-                    print(f"Cleaned up temporary file: {local_file_path}")
-        else:
-            print("Unified JSON generation failed, skipping file creation and upload.")
+                except Exception as e:
+                    print(f"Error during file generation or upload: {e}")
+                finally:
+                    if os.path.exists(local_file_path):
+                        os.remove(local_file_path)
+                        print(f"Cleaned up temporary file: {local_file_path}")
+            else:
+                print("Unified JSON generation failed, skipping file creation and upload.")
 
-        # After fetching data, check if any notifications need to be sent.
         await check_and_send_notifications()
     else:
         print("Scheduled job finished. CWA data fetching failed.")
@@ -332,55 +291,39 @@ async def check_and_send_notifications():
     Checks for notification conditions based on the cached CWA data.
     """
     print("Checking for notification conditions...")
-    # Example: A user is subscribed to notifications for "臺北市中正區"
     user_township = "臺北市中正區"
-    user_device_token = "DEVICE_TOKEN_HERE" # This would come from a database
+    user_device_token = "DEVICE_TOKEN_HERE" 
 
-    # This part will be updated to use the new map via the calculation function
     forecast = calculation.get_forecast_for_township(user_township, CACHED_TOWNSHIP_MAP)
 
     if forecast and forecast["cwa_forecast"]["chance_of_rain_12h"]:
         pop_value_str = forecast["cwa_forecast"]["chance_of_rain_12h"]
         if pop_value_str and pop_value_str.isdigit():
             pop_value = int(pop_value_str)
-            if pop_value > 50: # Condition: chance of rain > 50%
+            if pop_value > 50:
                 message = f"Weather Alert for {user_township}: Chance of rain is {pop_value}% in the next 12 hours."
                 print(message)
                 
-                # Send to Discord
                 discord_sender.send_to_discord(message)
-
-                # Send FCM push notification (placeholder)
-                # fcm_sender.send_notification(
-                #      title=f"{user_township} Weather Alert",
-                #      body=message,
-                #      token=user_device_token
-                # )
 
 # Schedule the data fetching job to run twice daily at 06:00 and 12:00
 scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=20)
 
 # --- Getter functions for API endpoints to access cached data ---
 def get_cached_weather_data():
-    """獲取快取的天氣資料"""
     return CACHED_WEATHER_DATA
 
 def get_county_weather(county_name: str):
-    """獲取指定縣市的天氣資料"""
     return CACHED_WEATHER_DATA['county_weather'].get(county_name)
 
 def get_township_weather(township_name: str):
-    """獲取指定鄉鎮的天氣資料"""
     return CACHED_WEATHER_DATA['township_weather'].get(township_name)
 
 def get_qpf_data(county_name: str):
-    """獲取指定縣市的降雨強度資料"""
     return CACHED_WEATHER_DATA['qpf_data'].get(county_name)
 
 def get_aqi_data(county_name: str):
-    """獲取指定縣市的空氣品質資料"""
     return CACHED_WEATHER_DATA['aqi_data'].get(county_name)
 
 def get_last_update_time():
-    """獲取資料最後更新時間"""
     return CACHED_WEATHER_DATA['update_time']

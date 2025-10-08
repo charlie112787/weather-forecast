@@ -136,6 +136,122 @@ IMAGE_SAMPLE_COORDS = {
 # This is a placeholder copied from QPF_COLOR_MAP. 
 # Calibrate these values to match the legend of the NCDR nowcast images.
 NCDR_NOWCAST_COLOR_MAP = QPF_COLOR_MAP.copy()
+==================== FILE: fcm_server.py ====================
+
+from fastapi import FastAPI, APIRouter, HTTPException
+from pydantic import BaseModel
+import firebase_admin
+from firebase_admin import credentials, firestore, messaging
+import os
+import asyncio
+import uvicorn
+from fastapi.middleware.cors import CORSMiddleware # 引入 CORSMiddleware
+
+# 確保 serviceAccountKey.json 存在
+# 這裡的路徑需要根據 fcm_server.py 相對於 serviceAccountKey.json 的位置來調整
+# 假設 serviceAccountKey.json 也在 server/ 目錄下
+SERVICE_ACCOUNT_KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'serviceAccountKey.json')
+
+if not os.path.exists(SERVICE_ACCOUNT_KEY_PATH):
+    print(f"錯誤：找不到服務帳戶金鑰檔案：{SERVICE_ACCOUNT_KEY_PATH}")
+    raise FileNotFoundError("serviceAccountKey.json not found")
+
+# 初始化 Firebase Admin SDK
+if not firebase_admin._apps:
+    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+    print("Firebase Admin SDK initialized successfully for FCM server.")
+
+db = firestore.client()
+
+app = FastAPI(
+    title="FCM Management API",
+    description="API for managing FCM registrations and topic subscriptions.",
+    version="1.0.0",
+)
+
+# 添加 CORS 中間件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:9000"], # 允許前端的來源
+    allow_credentials=True,
+    allow_methods=["*"], # 允許所有 HTTP 方法
+    allow_headers=["*"], # 允許所有請求頭
+)
+
+class FcmRegistration(BaseModel):
+    uid: str
+    fcmToken: str
+    townshipCode: str | None = None
+
+async def subscribe_to_weather_topic(fcm_token: str, township_code: str):
+    topic = f"weather_{township_code}"
+    try:
+        response = messaging.subscribe_to_topic([fcm_token], topic)
+        print(f"Successfully subscribed token {fcm_token} to topic {topic}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error subscribing token {fcm_token} to topic {topic}: {e}")
+        return False
+
+async def unsubscribe_from_weather_topic(fcm_token: str, topic: str):
+    try:
+        response = messaging.unsubscribe_to_topic([fcm_token], topic)
+        print(f"Successfully unsubscribed token {fcm_token} from topic {topic}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error unsubscribing token {fcm_token} from topic {topic}: {e}")
+        return False
+
+@app.post("/api/fcm/register")
+async def register_fcm(registration: FcmRegistration):
+    try:
+        user_ref = db.collection("fcmTokens").document(registration.uid)
+        user_doc = await asyncio.to_thread(user_ref.get) # Firestore get is synchronous
+
+        old_fcm_token = None
+        old_township_code = None
+        old_topic = None
+
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            old_fcm_token = data.get("fcmToken")
+            old_township_code = data.get("townshipCode")
+            if old_township_code:
+                old_topic = f"weather_{old_township_code}"
+
+        # 1. 處理 Token 變更或 TownshipCode 變更導致的訂閱更新
+        if old_fcm_token != registration.fcmToken: # Token 變更，需要重新訂閱
+            if old_fcm_token and old_topic: # 如果有舊 Token 和舊 Topic，先取消訂閱
+                await unsubscribe_from_weather_topic(old_fcm_token, old_topic)
+            if registration.townshipCode: # 用新 Token 訂閱新 Topic
+                await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode)
+        elif registration.townshipCode and old_township_code != registration.townshipCode: # Token 沒變，但 TownshipCode 變了
+            if old_topic: # 取消訂閱舊 Topic
+                await unsubscribe_from_weather_topic(registration.fcmToken, old_topic)
+            await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode) # 訂閱新 Topic
+        elif registration.townshipCode and not old_township_code: # 第一次設定 TownshipCode
+            await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode)
+        
+        # 2. 更新 Firestore 儲存
+        await asyncio.to_thread(user_ref.set, {
+            "uid": registration.uid,
+            "fcmToken": registration.fcmToken,
+            "townshipCode": registration.townshipCode,
+            "lastUpdated": firestore.SERVER_TIMESTAMP
+        })
+
+        return {"message": "FCM registration and topic subscription updated successfully"}
+    except Exception as e:
+        print(f"FCM 註冊失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"FCM registration failed: {e}")
+
+if __name__ == "__main__":
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=7800)
+    except Exception as e:
+        print(f"FCM 伺服器啟動失敗: {e}")
+
 ==================== FILE: get_weather.py ====================
 
 import sys
@@ -163,7 +279,7 @@ def main():
     township_name = "中正區"
 
     # 1. Fetch data
-    township_data = get_cwa_township_forecast_data(county_name)
+    township_data = get_cwa_township_forecast_data()
 
     if not township_data:
         print("Could not fetch weather data.")
@@ -189,6 +305,7 @@ import uvicorn
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from api.weather import router as weather_router
+from api.fcm import fcm_router # 引入新的 fcm_router
 import asyncio
 from scheduler import jobs
 from scheduler.jobs import scheduler
@@ -221,17 +338,91 @@ async def root():
     return {"message": "Welcome to the Weather Forecast API"}
 
 app.include_router(weather_router, prefix="/api/weather")
+app.include_router(fcm_router) # 包含 fcm_router
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8100, reload=True)
+
+==================== FILE: send_notification.py ====================
+
+import firebase_admin
+from firebase_admin import credentials, messaging
+import os
+import sys
+
+# 確保 serviceAccountKey.json 存在
+SERVICE_ACCOUNT_KEY_PATH = os.path.join(os.path.dirname(__file__), 'serviceAccountKey.json')
+
+if not os.path.exists(SERVICE_ACCOUNT_KEY_PATH):
+    print(f"錯誤：找不到服務帳戶金鑰檔案：{SERVICE_ACCOUNT_KEY_PATH}")
+    print("請確保 serviceAccountKey.json 檔案位於 /server 目錄中。")
+    sys.exit(1)
+
+# 初始化 Firebase Admin SDK
+if not firebase_admin._apps:
+    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+    print("Firebase Admin SDK 已成功初始化。")
+
+def send_weather_alert_sync(township_code: str, title: str, body: str, custom_data: dict = None):
+    """
+    發送天氣警報通知到指定鄉鎮的 Topic。
+    這是同步版本，用於簡單腳本。
+    """
+    topic = f"weather_{township_code}"
+    
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title=title,
+            body=body,
+        ),
+        data=custom_data, # 可以包含額外的自定義資料
+        topic=topic,
+    )
+
+    try:
+        response = messaging.send(message)
+        print(f"成功發送訊息到 Topic '{topic}': {response}")
+        return True
+    except Exception as e:
+        print(f"發送訊息到 Topic '{topic}' 時發生錯誤: {e}")
+        return False
+
+def main():
+    print("--- 發送 FCM Topic 通知 ---")
+    
+    township_code = input("請輸入目標鄉鎮代碼 (例如: TPE-100): ").strip()
+    if not township_code:
+        print("鄉鎮代碼不能為空。")
+        sys.exit(1)
+
+    notification_title = input("請輸入通知標題: ").strip()
+    if not notification_title:
+        print("通知標題不能為空。")
+        sys.exit(1)
+
+    notification_body = input("請輸入通知內容: ").strip()
+    if not notification_body:
+        print("通知內容不能為空。")
+        sys.exit(1)
+
+    # 這裡可以添加額外的自定義資料，例如：
+    # custom_data = {"alert_type": "大雨特報", "severity": "高"}
+    custom_data = None 
+
+    # 由於 messaging.send 是同步的，可以直接呼叫
+    send_weather_alert_sync(township_code, notification_title, notification_body, custom_data)
+
+if __name__ == "__main__":
+    main()
 
 ==================== FILE: serviceAccountKey.json ====================
 
 {
   "type": "service_account",
   "project_id": "weather-forecast-c62c3",
-  "private_key_id": "e34cd2b74d04c8a9b8fab26a565d35ed73cbb51f",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC0AUuynkdexdGU\nIBhu3ZbWXsM53o3Zz7gjIC3P7YdhOl+/nZxU9jZbbJPRyv72cWX8Onk5gBSvcq8y\n1Jo1FMnEJiKrvRaaYMs0LagdB0BSHaj0Y4JGfKeug4vO7zhMc5tti/utTuEnAUM6\nKU+MSL0tVMfV8ZrXi+qAZPmc5yPTweKQ5pZIvWB61JDug2nEgaOq0hsNNYzfvzOP\n1iG7WYQVx/YfDExO5iRUSi5c0iyGlylEFypI5c3ArMq4b66g8Ky3jY2wbOZkQ7HW\nwvnl2wakf8rpC+df+ZW1f9t3fLh+FnAnH5i3adyCPJvDqiWYr1SC8Ikdc5t/LoPX\nKeKt13d1AgMBAAECggEAD8efTFtuE+5RMY7gusinzPIbY4Am55sQitpqzwlabq5l\n2g/l4QLWgAw+0cuIWgVV30HRrQs/2k46R+v1pW/wQhw6ZNtw1vwOREGOX8EUz+i0\nDicyXUiB5fK34l5RN/kt0nF3kNlTM+P7RzwmMjzm10mmh72kM9TFrBdt/xBk287D\n41IjakVSFkmBrdJI4WJ3wO/zp2TS4de1hP1/FPsurrBgyCrm4Sch+0jQmLz61z7O\nN9TjBHZ8Q5Y0Sfhg3q0r8c/avWMSXGI/gTi0Q9J4ePcjfqJ4gir5XXu3m6Wwqryb\nn81DYcxt2MLCcNjTfRGBOYjc4LkeV4s84m5uzzYZPwKBgQDcV5UcagEbink7yYFq\noxKk2/38DioKsvwHJeMis8PDoglDhjawen2cP3wa3dcy0MCns7tFXL+rxlI1SHS7\nlkUUvNLsQWtsbRM89JZLIDHaHuuq/JR77XSJrgWtcQYhtlU7eY+PzvKFJU+wy7mi\nq6Ios5BB6n/HvT1K49inRRL1nwKBgQDRIp07JGaQ5mxe3brEZN+NmiK4LOW5j9uk\ng6i+FenwZ09pj/0X7pvMYR0/kAzxsciv3LqPPehTkbFxTLB5zvs84uQx0SIt4+ID\n3EanZXoL/xYqQbWzHVh4sjWmrsedAcnKJBZyZEwTQrozU/E9N8M95jsmPHsZO6UN\nPN7SsjZyawKBgBCsM+U9hC3wUXIbskY+ZqfA2bwb2kSK/JUR4dj7X0HLXgYU/shl\nzGFpUFu8E4+NyjYmXHJILVyzGf9cJzEWks2Z6B/mZ1mB+2WuYDz5B6yokE6U5Cto\ncVwFpfpUxhEA+fwRG7LXBvTaOOh40egkMpX/2FeUhey4Pg4PpZIqoN+jAoGABCoV\nSW0zIaWE+OqfYnPDw9US5en29Rf5PrBkdsyG6QOVoDt+xbA5p/szEuXybAmnPmE9\n0cZgzvEywFfPl81YUWEPPDK25IUKJhuHyKOLp5t/vH2seZGXBmg+C0CltumnNAA9\n9i8rGKMWhBkiz55BpATmnp9LsDfw1G+m3DkyPlsCgYEAoZsyrQ5NFJyK5i9sXT36\nCecUU3z8RaqIHLsWIq1qrYGk3BO4eB/6ZckZpJ2n5mNEXtZzW2HzWWA4nbn71/Ro\nl+237EvXyx2O309eUNAOFw/leGQTQW3nH4yOrmYd3ScSXQTJFOD4BmajnKxf1ZtE\ny1Ewx0BHkUh4gmYyjemqdPI=\n-----END PRIVATE KEY-----\n",
+  "private_key_id": "8c6e2952cbda95d42d59d0c427f0b712438bc732",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDMZAg5HWwJQViE\nqM2M1r6nDYqTu50zWl8g5eOPIjSvAnh05fgGq6lS3EA1m8VK2qZYY4fa8f47FuZp\nFvm93vtlfdQMKyUz3EnnguFsl/jdGTfCMe8LVqU9F9wzRMUTIwXP2Me8OlY9fcfs\nswhW6hqcSwdQsHywMTHHLnuT/JZGBIUrAKlxVEpboHAoiX9Qb0VBi7EI+2nhi4rZ\nVgKeMe8GEeXnTQzoVPpewxSro9arPs3UzFq3Xx+u+RgM6PTZh5YsFS7GE4A3zDk6\n4pa9jC2oniFl3BVw6lcFnlwjVvknEx5QA3HeCB/EwbFYOD5hUHtP+K0UDXFtHQ/A\n4+FWMH4TAgMBAAECggEACpG9rx5rYMslRa7o+jh8oWzc1qjkByzMMIpSyysMqGQr\nUHg37DhiSCulkmAcwrMt2PJEqzjKWcnkXljWz0/Blkz8cyikAtuIYtVszM3LC7vr\nGzqzztVLNC6Qr4IF4uhzu3zNT1mA7isb9IyJiN0QRTbICQ8nU4EnvtITh+KO7s3j\nXtduwAfTjFUs2nBU513N5JIjr0lbh2lvX02gFHqhNTs66FCWmAhQJ6OfDlqB/Z2k\nPTT3k6xH9mcUqY+ly/qz/OLQUM/gt1+ZS4MFrZmooDRwLs6UOc4KLHO18mMfK1bC\n8ans9YR8T1JBhpUnoGRUbcdnEGQm/hsccS8euZfB2QKBgQDqay2YuExh76jJ3STt\nuX74lF7qLwqscULCg3VlswIWOGSIncfIOHEG5F8owI5ZnxD65/CSOAkZP9+aY9yQ\nBmlq2QfKO9ID1xASCv2Q9/bTsbU4j0Tr+60k04WreI7BnbEDD9ZcLJyxlMFKuuEU\ntxgeX2sJMJxeUF9ZVoqduh5dtQKBgQDfNSaQ88GdBbWKEn+V6wj7JF9K753jYFkw\n0zIqZPoWTWE2CqKViruGGhh7StL9E3VertNqLU/bx1NF3UwyZKSOAj243orLOJmo\nMtEQ54zfwOUactJ1CwMIdhb/hZyqK1fP1MUsGDGoEIjpFPErgxgyepMqltRNopZk\nIba2TH4JpwKBgAnBEfGj4ZHFrilQKWQ27sCbM+Pctz37rIJ5g94Kd9DC4fQJVLHR\nH2rg/9CrSoESLFu0YP9Ek6RYUw6Sjy/zBFns0/UnThLY1RNbH7fziXK/l0HWPFDx\ndP/uSUacSpxl2mK9Ovc06AQ/o1dftVPuVnOVFtgYDLmj8IPAJR5xCyhtAoGACqLq\nwo+LE2N5QiodgFRh6i3SiKygdnxZ47S8uD51mGh5kGyzULL6uqo1rnJjWYH63tcv\n5ehg3NVDx5mDDweyu72pmUypioOY9uXtBoQyN1tmz3rXQpKSw211LRn93DISjinS\nd4Zzn1GiZJEF6Q/nMEidCLOFTGnKBt2AanF8tBMCgYBX7/2igX1ffEJt3vNg4iN3\naOECXrpOuWII7UwAXfZwxsQO1ZAL4dhsiK/+rNThKmj1ImPVi5v7fU3rHjEJ3Ebq\nrzX1f958Rtu8z9ysdkwT7nEXzabfP9nAE+wZ15suyqnsaxn/B51PizqNNj7dgVmS\nTxZynINHw7oi5ojUTLzXaQ==\n-----END PRIVATE KEY-----\n",
   "client_email": "firebase-adminsdk-fbsvc@weather-forecast-c62c3.iam.gserviceaccount.com",
   "client_id": "108190628543596458377",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -240,6 +431,98 @@ if __name__ == "__main__":
   "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40weather-forecast-c62c3.iam.gserviceaccount.com",
   "universe_domain": "googleapis.com"
 }
+
+==================== FILE: api\fcm.py ====================
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+import firebase_admin
+from firebase_admin import credentials, firestore, messaging
+import os
+import asyncio
+
+# 確保 serviceAccountKey.json 存在
+SERVICE_ACCOUNT_KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'serviceAccountKey.json')
+
+if not os.path.exists(SERVICE_ACCOUNT_KEY_PATH):
+    print(f"錯誤：找不到服務帳戶金鑰檔案：{SERVICE_ACCOUNT_KEY_PATH}")
+    raise FileNotFoundError("serviceAccountKey.json not found")
+
+# 初始化 Firebase Admin SDK
+if not firebase_admin._apps:
+    cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+    print("Firebase Admin SDK initialized successfully in FCM router.")
+
+db = firestore.client()
+fcm_router = APIRouter(prefix="/api/fcm", tags=["FCM"])
+
+class FcmRegistration(BaseModel):
+    uid: str
+    fcmToken: str
+    townshipCode: str | None = None
+
+async def subscribe_to_weather_topic(fcm_token: str, township_code: str):
+    topic = f"weather_{township_code}"
+    try:
+        response = messaging.subscribe_to_topic([fcm_token], topic)
+        print(f"Successfully subscribed token {fcm_token} to topic {topic}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error subscribing token {fcm_token} to topic {topic}: {e}")
+        return False
+
+async def unsubscribe_from_weather_topic(fcm_token: str, topic: str):
+    try:
+        response = messaging.unsubscribe_from_topic([fcm_token], topic)
+        print(f"Successfully unsubscribed token {fcm_token} from topic {topic}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error unsubscribing token {fcm_token} from topic {topic}: {e}")
+        return False
+
+@fcm_router.post("/register")
+async def register_fcm(registration: FcmRegistration):
+    try:
+        user_ref = db.collection("fcmTokens").document(registration.uid)
+        user_doc = await asyncio.to_thread(user_ref.get) # Firestore get is synchronous
+
+        old_fcm_token = None
+        old_township_code = None
+        old_topic = None
+
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            old_fcm_token = data.get("fcmToken")
+            old_township_code = data.get("townshipCode")
+            if old_township_code:
+                old_topic = f"weather_{old_township_code}"
+
+        # 1. 處理 Token 變更或 TownshipCode 變更導致的訂閱更新
+        if old_fcm_token != registration.fcmToken: # Token 變更，需要重新訂閱
+            if old_fcm_token and old_topic: # 如果有舊 Token 和舊 Topic，先取消訂閱
+                await unsubscribe_from_weather_topic(old_fcm_token, old_topic)
+            if registration.townshipCode: # 用新 Token 訂閱新 Topic
+                await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode)
+        elif registration.townshipCode and old_township_code != registration.townshipCode: # Token 沒變，但 TownshipCode 變了
+            if old_topic: # 取消訂閱舊 Topic
+                await unsubscribe_from_weather_topic(registration.fcmToken, old_topic)
+            await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode) # 訂閱新 Topic
+        elif registration.townshipCode and not old_township_code: # 第一次設定 TownshipCode
+            await subscribe_to_weather_topic(registration.fcmToken, registration.townshipCode)
+        
+        # 2. 更新 Firestore 儲存
+        await asyncio.to_thread(user_ref.set, {
+            "uid": registration.uid,
+            "fcmToken": registration.fcmToken,
+            "townshipCode": registration.townshipCode,
+            "lastUpdated": firestore.SERVER_TIMESTAMP
+        })
+
+        return {"message": "FCM registration and topic subscription updated successfully"}
+    except Exception as e:
+        print(f"FCM 註冊失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"FCM registration failed: {e}")
 
 ==================== FILE: api\weather.py ====================
 
@@ -1279,6 +1562,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import config
+import json
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 
@@ -1322,11 +1606,9 @@ def create_session():
     session.mount('https://', HTTPAdapter(max_retries=retry))
     return session
 
-def get_cwa_township_forecast_data(city: str = None):
+def get_cwa_township_forecast_data(city: str):
     """
-    Fetches 36-hour weather forecast data for townships.
-    Args:
-        city: The city name to fetch data for.
+    Fetches township weather forecast data for a specific city.
     """
     session = create_session()
     dataset_id = CWA_TOWNSHIP_CODES.get(city)
@@ -1342,45 +1624,26 @@ def get_cwa_township_forecast_data(city: str = None):
     }
     params = {
         "Authorization": config.CWA_API_KEY,
-        "elementName": "PoP12h,T,Wx,PoP6h"
     }
 
     try:
         print(f"Fetching CWA township forecast data for {city}...")
         response = session.get(
-            url, 
+            url,
             params=params,
-            headers=headers, # Add User-Agent header
+            headers=headers,
             verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
         )
         response.raise_for_status()
-        
-        # --- FINAL DEBUG: Print raw response text ---
-        print(f"--- Raw Response for {city} ---")
-        print(response.text)
-        print("--- End Raw Response ---")
 
-        import json
-
-        # Manually decode the response to avoid potential encoding issues with response.json()
         try:
-            data_text = response.content.decode('utf-8')
-            data = json.loads(data_text)
-
+            data = response.json()
             records = data.get('records', {})
-            # The F-D0047-XXX responses have a nested structure: records -> locations (list of groups) -> location (list of towns)
-            if 'locations' in records:
-                for i, location_group in enumerate(records['locations']):
-                    print(f"Debug: Processing location_group {i}, type: {type(location_group)}")
-                    if isinstance(location_group, dict):
-                        print(f"Debug: location_group {i} keys: {location_group.keys()}")
-                        if location_group.get('location'):
-                            all_locations.extend(location_group['location'])
-            # Fallback for a flatter structure, just in case
-            elif 'location' in records:
-                all_locations.extend(records['location'])
-            
-            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations in this batch.")
+            locations = records.get('location')
+            if isinstance(locations, list):
+                all_locations.extend(locations)
+                    
+            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations.")
 
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             print(f"CRITICAL: Failed to decode or parse JSON for {city}. Error: {e}")
@@ -1394,16 +1657,11 @@ def get_cwa_township_forecast_data(city: str = None):
         print(f"Warning: No locations found for {city} after successful fetch.")
         return None
 
-    # Return the standard structure for this single city
     return {
         'records': {
             'location': all_locations
         }
     }
-
-CWA_TOWNSHIP_FORECAST_ID = "F-D0047-093"  # 鄉鎮天氣預報
-
-
 
 def get_cwa_county_forecast_data():
     """
@@ -1411,7 +1669,7 @@ def get_cwa_county_forecast_data():
     """
     session = create_session()
     url = f"{CWA_API_URL}{CWA_COUNTY_FORECAST_ID}"
-    params = {"Authorization": config.CWA_API_KEY}
+    params = {"Authorization": config.CWA_API_KEY, "elementName": "MinT,MaxT,Wx,PoP"}
     verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
     
     try:
@@ -1423,7 +1681,6 @@ def get_cwa_county_forecast_data():
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA county data: {e}")
         return None
-
 ==================== FILE: core\image_analyzer.py ====================
 
 import io
@@ -1850,6 +2107,9 @@ from core import image_url_resolver
 import config
 from services import fcm_sender, discord_sender
 import asyncio
+import datetime
+import os
+import json
 
 scheduler = AsyncIOScheduler()
 
@@ -1886,10 +2146,8 @@ def _normalize_name(name: str) -> str:
 async def _fetch_weather_data(county_data=None):
     """Fetches both county and township level weather data."""
     if county_data is None:
-        # 如果沒有提供縣市資料，則獲取它
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
 
-    # --- DEBUGGING: Inspect raw county_data ---
     if county_data and isinstance(county_data, dict):
         print(f"Debug: county_data keys: {county_data.keys()}")
         records = county_data.get('records', {})
@@ -1897,69 +2155,54 @@ async def _fetch_weather_data(county_data=None):
         print(f"Debug: Found {len(locations)} locations in county_data.")
     else:
         print("Debug: county_data is None or not a dict.")
-    # --- END DEBUGGING ---
 
-    # 獲取所有縣市的鄉鎮級資料
     township_data_tasks = []
     for city in data_fetcher.CWA_TOWNSHIP_CODES.keys():
         township_data_tasks.append(
             asyncio.to_thread(data_fetcher.get_cwa_township_forecast_data, city)
         )
     
-    # 並行獲取所有鄉鎮資料
     township_data_results = await asyncio.gather(*township_data_tasks)
     
-    # 合併所有鄉鎮資料
-    print(f"Debug: Merging {len(township_data_results)} results from township API calls.")
     all_locations = []
-    for i, result in enumerate(township_data_results):
-        if result and isinstance(result, dict) and result.get('records') and isinstance(result['records'], dict) and result['records'].get('location'):
+    for result in township_data_results:
+        if result and isinstance(result, dict) and result.get('records') and result['records'].get('location'):
             all_locations.extend(result['records']['location'])
-        else:
-            # Log the unexpected structure
-            print(f"Debug: Result {i} has an unexpected structure.")
-            if result and isinstance(result, dict):
-                print(f"Debug: Result {i} keys: {result.keys()}")
-                if 'records' in result and isinstance(result['records'], dict):
-                    print(f"Debug: Result {i}['records'] keys: {result['records'].keys()}")
-            else:
-                print(f"Debug: Result {i} is not a valid dictionary: {result}")
 
-    print(f"Debug: Total locations collected after merge: {len(all_locations)}")
     all_township_data = {
         'records': {
             'location': all_locations
         }
     }
     
-    # 處理縣市資料
     county_weather = {}
     if county_data and 'records' in county_data:
         for location in county_data['records'].get('location', []):
             county_name = location.get('locationName')
-            print(f"Debug: Processing county: {county_name}")
             if county_name:
                 weather_elements = {}
+                min_temp, max_temp = None, None
                 for element in location.get('weatherElement', []):
                     name = element.get('elementName')
                     if name and element.get('time'):
                         param = element['time'][0].get('parameter', {})
                         weather_elements[name] = param.get('parameterName')
+                        if name == 'MinT':
+                            min_temp = int(param.get('parameterName'))
+                        if name == 'MaxT':
+                            max_temp = int(param.get('parameterName'))
+                if min_temp is not None and max_temp is not None:
+                    weather_elements['T'] = (min_temp + max_temp) // 2
                 
-                county_weather[county_name] = {
-                    'temperature': weather_elements.get('T'),
-                    'weather_description': weather_elements.get('Wx'),
-                    'pop': weather_elements.get('PoP')
-                }
+                county_weather[county_name] = weather_elements
     
-    # 處理鄉鎮資料
     township_weather = {}
     if all_township_data and all_township_data.get('records') and all_township_data['records'].get('location'):
         for location in all_township_data['records']['location']:
-            township_name = location.get('locationName')
+            township_name = location.get('locationName') 
             if township_name:
-                # Store the entire location object, as this is what calculation.py expects
-                township_weather[_normalize_name(township_name)] = location
+                normalized_name = _normalize_name(township_name)
+                township_weather[normalized_name] = location
     
     return county_weather, township_weather, all_township_data
 
@@ -1968,36 +2211,33 @@ async def fetch_data_job():
     Scheduled job to fetch and cache weather data.
     """
     print("Running scheduled job: fetch_data_job")
-    global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP
+    global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP, CACHED_FINAL_JSON
 
     try:
-        # 獲取API數據
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
         weather_data = await _fetch_weather_data(county_data)
         
-        if not weather_data:
-            print("Failed to fetch weather data")
+        if not weather_data or not weather_data[1]:
+            print("Failed to fetch weather data or township_weather is empty")
             return
         
         county_weather, township_weather, all_township_data = weather_data
         
-        # 更新快取資料
         CACHED_CWA_TOWNSHIP_DATA = all_township_data
         CACHED_TOWNSHIP_MAP = township_weather
         CACHED_WEATHER_DATA.update({
                 'county_weather': county_weather,
-                'township_weather': township_weather
+                'township_weather': township_weather,
+                'update_time': datetime.datetime.now().isoformat()
             })
     except Exception as e:
         print(f"Error in fetch_data_job while fetching weather data: {e}")
         return
     
-    # 分析圖片數據
     try:
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
 
-        # Resolve image URLs
         qpf12_url = await asyncio.to_thread(
             image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
         )
@@ -2008,7 +2248,6 @@ async def fetch_data_job():
             image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
         )
 
-        # --- Consolidated Image Metric Analysis ---
         image_metrics = {}
         if not (config.IMAGE_SAMPLE_COORDS):
              print("Warning: IMAGE_SAMPLE_COORDS not configured in config.py. Skipping image analysis.")
@@ -2018,7 +2257,6 @@ async def fetch_data_job():
             if not sample_xy:
                 continue
 
-            # Analyze QPF (Rainfall Intensity)
             qpf12_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
             ) if qpf12_url else None
@@ -2026,7 +2264,6 @@ async def fetch_data_job():
                 image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
             ) if qpf6_url else None
 
-            # Analyze AQI
             aqi_level = None
             if aqi_url:
                 box_size = 10
@@ -2044,12 +2281,10 @@ async def fetch_data_job():
                 "aqi_level": aqi_level,
             }
         
-        # --- NCDR Daily Rain Analysis ---
         try:
             print("Starting NCDR daily rain analysis...")
             daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
             if daily_rain_url and image_url_resolver._is_image_url(daily_rain_url):
-                # Analyze this single image for all counties
                 daily_rain_tasks = {}
                 for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
                     if sample_xy:
@@ -2060,7 +2295,6 @@ async def fetch_data_job():
                 daily_rain_results = await asyncio.gather(*daily_rain_tasks.values())
                 county_results = dict(zip(daily_rain_tasks.keys(), daily_rain_results))
 
-                # Store the results
                 for county, data in county_results.items():
                     if county in image_metrics and data:
                         image_metrics[county]['ncdr_daily_rain'] = data
@@ -2069,21 +2303,17 @@ async def fetch_data_job():
         except Exception as e:
             print(f"Error during NCDR daily rain analysis: {e}")
 
-        # --- NCDR Nowcast Analysis ---
         try:
             print("Starting NCDR nowcast analysis...")
-            # 1. Find the latest nowcast series
             latest_f01h_url = await asyncio.to_thread(
                 image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN
             )
 
             if latest_f01h_url:
                 print(f"Found latest NCDR nowcast series: {latest_f01h_url}")
-                # 2. Generate all 12 URLs for the series
                 base_url = latest_f01h_url.rsplit('_', 1)[0]
                 nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
 
-                # 3. Analyze all 12 images for each county
                 for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
                     if not sample_xy:
                         continue
@@ -2096,7 +2326,6 @@ async def fetch_data_job():
                     
                     hourly_forecasts = await asyncio.gather(*nowcast_tasks)
 
-                    # 4. Store the 12-hour forecast data
                     if county in image_metrics:
                         image_metrics[county]['ncdr_nowcast'] = [
                             {"hour": i + 1, **(data or {})}
@@ -2107,14 +2336,9 @@ async def fetch_data_job():
         except Exception as e:
             print(f"Error during NCDR nowcast analysis: {e}")
 
-        # Update the single, consolidated cache for image metrics
         CACHED_IMAGE_METRICS.clear()
         CACHED_IMAGE_METRICS.update(image_metrics)
         
-        # Deprecated caches are no longer updated
-        # CACHED_WEATHER_DATA.update({ 'qpf_data': {}, 'aqi_data': {} })
-        # global QPF_CACHE_BY_COUNTY; QPF_CACHE_BY_COUNTY = {}
-
         print(f"Image analysis complete. Metrics cached for {len(image_metrics)} counties.")
 
     except Exception as e:
@@ -2122,52 +2346,42 @@ async def fetch_data_job():
 
     if CACHED_CWA_TOWNSHIP_DATA:
         print("Scheduled job finished. CWA data has been cached.")
-        # After fetching data, generate the final JSON output
-        global CACHED_FINAL_JSON
         CACHED_FINAL_JSON = json_generator.generate_json_output()
         print(f"Debug: township_weather map contains {len(township_weather)} entries.")
-        # --- Final Step: Generate Unified JSON and Upload to Firebase ---
-        print("Proceeding to generate and upload unified JSON file.")
-        unified_data = json_generator.generate_unified_json()
         
-        if unified_data:
-            import json
-            import os
-            from services import firebase_uploader
+        if CACHED_WEATHER_DATA['township_weather']:
+            print("Proceeding to generate and upload unified JSON file.")
+            unified_data = json_generator.generate_unified_json()
+        
+            if unified_data:
+                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
+                os.makedirs(temp_dir, exist_ok=True)
+                local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
+                destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
 
-            # Define file paths
-            temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp')
-            os.makedirs(temp_dir, exist_ok=True)
-            local_file_path = os.path.join(temp_dir, "all_forecasts.txt")
-            destination_blob_name = f"forecasts/all_forecasts_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.txt"
+                try:
+                    with open(local_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(unified_data, f, ensure_ascii=False, indent=4)
+                    print(f"Successfully saved unified data to {local_file_path}")
 
-            # Save data to local file
-            try:
-                with open(local_file_path, 'w', encoding='utf-8') as f:
-                    json.dump(unified_data, f, ensure_ascii=False, indent=4)
-                print(f"Successfully saved unified data to {local_file_path}")
-
-                # Upload to Firebase
-                if os.getenv('FIREBASE_STORAGE_BUCKET'):
-                    upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
-                    if upload_url:
-                        print("Firebase upload successful.")
+                    if os.getenv('FIREBASE_STORAGE_BUCKET'):
+                        upload_url = firebase_uploader.upload_file_to_storage(local_file_path, destination_blob_name)
+                        if upload_url:
+                            print("Firebase upload successful.")
+                        else:
+                            print("Firebase upload failed.")
                     else:
-                        print("Firebase upload failed.")
-                else:
-                    print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
+                        print("Warning: FIREBASE_STORAGE_BUCKET env var not set. Skipping Firebase upload.")
 
-            except Exception as e:
-                print(f"Error during file generation or upload: {e}")
-            finally:
-                # Clean up local file
-                if os.path.exists(local_file_path):
-                    os.remove(local_file_path)
-                    print(f"Cleaned up temporary file: {local_file_path}")
-        else:
-            print("Unified JSON generation failed, skipping file creation and upload.")
+                except Exception as e:
+                    print(f"Error during file generation or upload: {e}")
+                finally:
+                    if os.path.exists(local_file_path):
+                        os.remove(local_file_path)
+                        print(f"Cleaned up temporary file: {local_file_path}")
+            else:
+                print("Unified JSON generation failed, skipping file creation and upload.")
 
-        # After fetching data, check if any notifications need to be sent.
         await check_and_send_notifications()
     else:
         print("Scheduled job finished. CWA data fetching failed.")
@@ -2177,57 +2391,41 @@ async def check_and_send_notifications():
     Checks for notification conditions based on the cached CWA data.
     """
     print("Checking for notification conditions...")
-    # Example: A user is subscribed to notifications for "臺北市中正區"
     user_township = "臺北市中正區"
-    user_device_token = "DEVICE_TOKEN_HERE" # This would come from a database
+    user_device_token = "DEVICE_TOKEN_HERE" 
 
-    # This part will be updated to use the new map via the calculation function
     forecast = calculation.get_forecast_for_township(user_township, CACHED_TOWNSHIP_MAP)
 
     if forecast and forecast["cwa_forecast"]["chance_of_rain_12h"]:
         pop_value_str = forecast["cwa_forecast"]["chance_of_rain_12h"]
         if pop_value_str and pop_value_str.isdigit():
             pop_value = int(pop_value_str)
-            if pop_value > 50: # Condition: chance of rain > 50%
+            if pop_value > 50:
                 message = f"Weather Alert for {user_township}: Chance of rain is {pop_value}% in the next 12 hours."
                 print(message)
                 
-                # Send to Discord
                 discord_sender.send_to_discord(message)
-
-                # Send FCM push notification (placeholder)
-                # fcm_sender.send_notification(
-                #      title=f"{user_township} Weather Alert",
-                #      body=message,
-                #      token=user_device_token
-                # )
 
 # Schedule the data fetching job to run twice daily at 06:00 and 12:00
 scheduler.add_job(fetch_data_job, 'cron', hour='6,12', minute=20)
 
 # --- Getter functions for API endpoints to access cached data ---
 def get_cached_weather_data():
-    """獲取快取的天氣資料"""
     return CACHED_WEATHER_DATA
 
 def get_county_weather(county_name: str):
-    """獲取指定縣市的天氣資料"""
     return CACHED_WEATHER_DATA['county_weather'].get(county_name)
 
 def get_township_weather(township_name: str):
-    """獲取指定鄉鎮的天氣資料"""
     return CACHED_WEATHER_DATA['township_weather'].get(township_name)
 
 def get_qpf_data(county_name: str):
-    """獲取指定縣市的降雨強度資料"""
     return CACHED_WEATHER_DATA['qpf_data'].get(county_name)
 
 def get_aqi_data(county_name: str):
-    """獲取指定縣市的空氣品質資料"""
     return CACHED_WEATHER_DATA['aqi_data'].get(county_name)
 
 def get_last_update_time():
-    """獲取資料最後更新時間"""
     return CACHED_WEATHER_DATA['update_time']
 
 ==================== FILE: scheduler\__init__.py ====================

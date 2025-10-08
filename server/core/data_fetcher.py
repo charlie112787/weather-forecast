@@ -3,6 +3,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import config
+import json
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 
@@ -46,11 +47,9 @@ def create_session():
     session.mount('https://', HTTPAdapter(max_retries=retry))
     return session
 
-def get_cwa_township_forecast_data(city: str = None):
+def get_cwa_township_forecast_data(city: str):
     """
-    Fetches 36-hour weather forecast data for townships.
-    Args:
-        city: The city name to fetch data for.
+    Fetches township weather forecast data for a specific city.
     """
     session = create_session()
     dataset_id = CWA_TOWNSHIP_CODES.get(city)
@@ -66,45 +65,35 @@ def get_cwa_township_forecast_data(city: str = None):
     }
     params = {
         "Authorization": config.CWA_API_KEY,
-        "elementName": "PoP12h,T,Wx,PoP6h"
     }
 
     try:
         print(f"Fetching CWA township forecast data for {city}...")
         response = session.get(
-            url, 
+            url,
             params=params,
-            headers=headers, # Add User-Agent header
+            headers=headers,
             verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
         )
         response.raise_for_status()
-        
-        # --- FINAL DEBUG: Print raw response text ---
-        print(f"--- Raw Response for {city} ---")
-        print(response.text)
-        print("--- End Raw Response ---")
 
-        import json
-
-        # Manually decode the response to avoid potential encoding issues with response.json()
         try:
-            data_text = response.content.decode('utf-8')
-            data = json.loads(data_text)
-
+            data = response.json()
             records = data.get('records', {})
-            # The F-D0047-XXX responses have a nested structure: records -> locations (list of groups) -> location (list of towns)
-            if 'locations' in records:
-                for i, location_group in enumerate(records['locations']):
-                    print(f"Debug: Processing location_group {i}, type: {type(location_group)}")
-                    if isinstance(location_group, dict):
-                        print(f"Debug: location_group {i} keys: {location_group.keys()}")
-                        if location_group.get('location'):
-                            all_locations.extend(location_group['location'])
-            # Fallback for a flatter structure, just in case
-            elif 'location' in records:
-                all_locations.extend(records['location'])
             
-            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations in this batch.")
+            # Robust parsing for both 'Locations' and 'location' keys
+            location_groups = records.get('Locations', records.get('locations'))
+            if isinstance(location_groups, list):
+                for loc_group in location_groups:
+                    if isinstance(loc_group, dict):
+                        locations = loc_group.get('Location', loc_group.get('location'))
+                        if isinstance(locations, list):
+                            all_locations.extend(locations)
+            # Fallback for flat structure
+            elif 'location' in records:
+                 all_locations.extend(records['location'])
+
+            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations.")
 
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             print(f"CRITICAL: Failed to decode or parse JSON for {city}. Error: {e}")
@@ -118,16 +107,11 @@ def get_cwa_township_forecast_data(city: str = None):
         print(f"Warning: No locations found for {city} after successful fetch.")
         return None
 
-    # Return the standard structure for this single city
     return {
         'records': {
             'location': all_locations
         }
     }
-
-CWA_TOWNSHIP_FORECAST_ID = "F-D0047-093"  # 鄉鎮天氣預報
-
-
 
 def get_cwa_county_forecast_data():
     """
@@ -135,7 +119,7 @@ def get_cwa_county_forecast_data():
     """
     session = create_session()
     url = f"{CWA_API_URL}{CWA_COUNTY_FORECAST_ID}"
-    params = {"Authorization": config.CWA_API_KEY}
+    params = {"Authorization": config.CWA_API_KEY, "elementName": "MinT,MaxT,Wx,PoP"}
     verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
     
     try:

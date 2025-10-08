@@ -72,6 +72,7 @@ async def _fetch_weather_data(county_data=None):
                 if township_name:
                     full_name = f"{city_name}{township_name}"
                     normalized_name = _normalize_name(full_name)
+                    print(f"[CWA] Township fetched: {full_name} -> normalized: {normalized_name}")
                     township_weather[normalized_name] = location
 
     all_township_data = {
@@ -96,6 +97,7 @@ async def _fetch_weather_data(county_data=None):
                             min_temp = int(param.get('parameterName'))
                         if name == 'MaxT':
                             max_temp = int(param.get('parameterName'))
+                print(f"[CWA] County parsed: {county_name} elements={list(weather_elements.keys())}")
                 if min_temp is not None and max_temp is not None:
                     weather_elements['T'] = (min_temp + max_temp) // 2
                 
@@ -142,46 +144,105 @@ async def fetch_data_job():
         aqi_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS)
 
         image_metrics = {}
-        if not (config.IMAGE_SAMPLE_COORDS):
-             print("Warning: IMAGE_SAMPLE_COORDS not configured in config.py. Skipping image analysis.")
-             return
 
-        for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
-            if not sample_xy:
+        # 使用三錨點 + TOWNSHIP_COORDS 自動推算座標；如未提供則略過影像分析
+        township_coords = getattr(config, 'TOWNSHIP_COORDS', None)
+        if not township_coords:
+            print("Warning: TOWNSHIP_COORDS not configured in config.py. Skipping image analysis.")
+            return
+
+        # 生成兩種尺寸的鄉鎮像素座標；預設優先使用 450x810
+        pixel_maps = image_analyzer.build_pixel_maps_from_township_coords(township_coords)
+        px_450_810 = pixel_maps.get("450x810", {})
+        print(f"[IMG] Built pixel map: 450x810 towns={len(px_450_810)}")
+
+        # 依縣市聚合：取該縣市所有鄉鎮的 min/max 匯總
+        from core import codes as _codes
+        counties = list(_codes.COUNTY_NAME_TO_CODE.keys())
+
+        for county in counties:
+            # 該縣市的所有鄉鎮名（完整名稱）
+            town_names = [t for t in _codes.TOWNSHIP_NAME_TO_CODE.keys() if t.startswith(county)]
+            # 轉成像素座標，若缺少則略過
+            town_pixels = [px_450_810.get(t) for t in town_names if px_450_810.get(t)]
+            if not town_pixels:
+                print(f"[IMG] Skip county (no pixels): {county}")
+                image_metrics[county] = {
+                    "qpf12_max_mm_per_hr": None,
+                    "qpf12_min_mm_per_hr": None,
+                    "qpf6_max_mm_per_hr": None,
+                    "qpf6_min_mm_per_hr": None,
+                    "daily_rain": None,
+                    "nowcast": [],
+                    "aqi_level": None,
+                }
                 continue
 
-            pop12_data = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
-            ) if pop12_url else None
-            pop6_data = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
-            ) if pop6_url else None
+            # POP12/POP6（CWA 圖）：聚合鄉鎮 min/max
+            print(f"[IMG] County start: {county} towns_with_pixels={len(town_pixels)}")
+            pop12_min = None; pop12_max = None
+            if pop12_url:
+                print(f"[IMG] {county} POP12 analyzing @ {pop12_url}")
+                for xy in town_pixels:
+                    r = await asyncio.to_thread(image_analyzer.analyze_qpf_from_image, pop12_url, xy)
+                    if r:
+                        pop12_min = r["min"] if pop12_min is None else min(pop12_min, r["min"])
+                        pop12_max = r["max"] if pop12_max is None else max(pop12_max, r["max"])
 
-            daily_rain_data = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image, daily_rain_url, sample_xy
-            ) if daily_rain_url else None
+            pop6_min = None; pop6_max = None
+            if pop6_url:
+                print(f"[IMG] {county} POP6 analyzing @ {pop6_url}")
+                for xy in town_pixels:
+                    r = await asyncio.to_thread(image_analyzer.analyze_qpf_from_image, pop6_url, xy)
+                    if r:
+                        pop6_min = r["min"] if pop6_min is None else min(pop6_min, r["min"])
+                        pop6_max = r["max"] if pop6_max is None else max(pop6_max, r["max"])
 
+            # 每日單張（NCDR）：聚合鄉鎮 min/max
+            daily_rain_data = None
+            if daily_rain_url:
+                print(f"[IMG] {county} Daily rain analyzing @ {daily_rain_url}")
+                daily_min = None; daily_max = None
+                for xy in town_pixels:
+                    r = await asyncio.to_thread(image_analyzer.analyze_qpf_from_image, daily_rain_url, xy)
+                    if r:
+                        daily_min = r["min"] if daily_min is None else min(daily_min, r["min"])
+                        daily_max = r["max"] if daily_max is None else max(daily_max, r["max"])
+                if daily_min is not None and daily_max is not None:
+                    daily_rain_data = {"min": daily_min, "max": daily_max}
+
+            # 12 張 Nowcast：對每張做一次聚合
             nowcast_data = []
             if nowcast_base_url:
                 base_url = nowcast_base_url.rsplit('_', 1)[0]
                 nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
+                print(f"[IMG] {county} Nowcast analyzing ({len(nowcast_urls)} frames) base={base_url}")
                 for url in nowcast_urls:
-                    nowcast_data.append(await asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy))
+                    frame_min = None; frame_max = None
+                    for xy in town_pixels:
+                        r = await asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, xy)
+                        if r:
+                            frame_min = r["min"] if frame_min is None else min(frame_min, r["min"])
+                            frame_max = r["max"] if frame_max is None else max(frame_max, r["max"])
+                    if frame_min is None or frame_max is None:
+                        nowcast_data.append({"min": 0.0, "max": 0.0})
+                    else:
+                        nowcast_data.append({"min": frame_min, "max": frame_max})
 
+            # AQI 仍以縣市代表點取色（簡化）。如需同樣聚合可以改成所有鄉鎮再聚合
             aqi_level = None
-            if aqi_url:
+            if aqi_url and town_pixels:
+                # 取第一個像素點為代表
+                x, y = town_pixels[0]
                 box_size = 10
-                x, y = sample_xy
                 sample_box = (x - box_size // 2, y - box_size // 2, x + box_size // 2, y + box_size // 2)
-                aqi_level = await asyncio.to_thread(
-                    image_analyzer.analyze_aqi_from_image, aqi_url, sample_box
-                )
+                aqi_level = await asyncio.to_thread(image_analyzer.analyze_aqi_from_image, aqi_url, sample_box)
 
             image_metrics[county] = {
-                "qpf12_max_mm_per_hr": pop12_data.get("max") if pop12_data else None,
-                "qpf12_min_mm_per_hr": pop12_data.get("min") if pop12_data else None,
-                "qpf6_max_mm_per_hr": pop6_data.get("max") if pop6_data else None,
-                "qpf6_min_mm_per_hr": pop6_data.get("min") if pop6_data else None,
+                "qpf12_max_mm_per_hr": pop12_max,
+                "qpf12_min_mm_per_hr": pop12_min,
+                "qpf6_max_mm_per_hr": pop6_max,
+                "qpf6_min_mm_per_hr": pop6_min,
                 "daily_rain": daily_rain_data,
                 "nowcast": nowcast_data,
                 "aqi_level": aqi_level,
@@ -198,7 +259,7 @@ async def fetch_data_job():
     if CACHED_CWA_TOWNSHIP_DATA:
         print("Scheduled job finished. CWA data has been cached.")
         CACHED_FINAL_JSON = json_generator.generate_json_output()
-        print(f"Debug: township_weather map contains {len(township_weather)} entries.")
+        print(f"Debug: township_weather map contains {len(CACHED_WEATHER_DATA.get('township_weather') or {})} entries.")
         
         if CACHED_WEATHER_DATA['township_weather']:
             print("Proceeding to generate and upload unified JSON file.")

@@ -145,45 +145,181 @@ def _closest_color(value: Tuple[int, int, int], palette: List[Tuple[int, int, in
     return best
 
 
+def _sample_circle_min_max(image: Image.Image, center_xy: Tuple[int, int], radius: int, palette: List[Tuple[int, int, int]], value_map: Dict[Tuple[int, int, int], float]) -> Dict[str, float]:
+    """
+    Sample pixels in a filled circle around center_xy with given radius.
+    Return min/max mapped values (excluding 0 unless only zeros present).
+    """
+    cx, cy = center_xy
+    r2 = radius * radius
+    qpf_values: List[float] = []
+    for y in range(max(0, cy - radius), min(image.height, cy + radius + 1)):
+        dy = y - cy
+        dy2 = dy * dy
+        # Compute horizontal span for this scanline to avoid sqrt
+        # x such that (x-cx)^2 + dy^2 <= r^2  -> |x-cx| <= floor(sqrt(r^2 - dy^2))
+        # Iterate full box and check condition to keep code simple and robust
+        for x in range(max(0, cx - radius), min(image.width, cx + radius + 1)):
+            dx = x - cx
+            if dx * dx + dy2 > r2:
+                continue
+            rgb = image.getpixel((x, y))[:3]
+            nearest = _closest_color(rgb, palette)
+            v = value_map.get(nearest)
+            if v is not None and v > 0:
+                qpf_values.append(v)
+    if not qpf_values:
+        return {"min": 0.0, "max": 0.0}
+    return {"min": min(qpf_values), "max": max(qpf_values)}
+
+
+def compute_affine_from_three_points(
+    src1: Tuple[float, float], src2: Tuple[float, float], src3: Tuple[float, float],
+    dst1: Tuple[float, float], dst2: Tuple[float, float], dst3: Tuple[float, float],
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """
+    Compute 2D affine transform mapping src -> dst using three non-collinear points.
+    Returns matrix rows (a, b, tx), (c, d, ty) so that:
+      x' = a*x + b*y + tx
+      y' = c*x + d*y + ty
+    """
+    x1, y1 = src1; x2, y2 = src2; x3, y3 = src3
+    u1, v1 = dst1; u2, v2 = dst2; u3, v3 = dst3
+
+    # Solve linear system for a,b,tx and c,d,ty separately
+    def solve(u1, u2, u3):
+        # Matrix M = [[x1, y1, 1],[x2, y2, 1],[x3, y3, 1]] * [a,b,tx]^T = [u1,u2,u3]^T
+        D = x1*(y2*1 - y3*1) - y1*(x2*1 - x3*1) + 1*(x2*y3 - x3*y2)
+        if D == 0:
+            raise ValueError("Source points are collinear")
+        Da = u1*(y2*1 - y3*1) - y1*(u2*1 - u3*1) + 1*(x2*u3 - x3*u2)
+        Db = x1*(u2*1 - u3*1) - u1*(x2*1 - x3*1) + 1*(x2*y3 - x3*y2)  # reuse term for stability
+        Dt = x1*(y2*u3 - y3*u2) - y1*(x2*u3 - x3*u2) + u1*(x2*y3 - x3*y2)
+        a = Da / D
+        b = Db / D
+        t = Dt / D
+        return a, b, t
+
+    a, b, tx = solve(u1, u2, u3)
+    c, d, ty = solve(v1, v2, v3)
+    return (a, b, tx), (c, d, ty)
+
+
+def apply_affine(matrix: Tuple[Tuple[float, float, float], Tuple[float, float, float]],
+                 xy: Tuple[float, float]) -> Tuple[int, int]:
+    (a, b, tx), (c, d, ty) = matrix
+    x, y = xy
+    x2 = a * x + b * y + tx
+    y2 = c * x + d * y + ty
+    return int(round(x2)), int(round(y2))
+
+
+# --- Taiwan city center approximate coordinates (lon, lat) ---
+_CITY_CENTER_LONLAT: Dict[str, Tuple[float, float]] = {
+    # 以市府/市中心近似值；如需更精準可替換
+    "臺北市": (121.5637, 25.0377),
+    "臺中市": (120.6736, 24.1477),
+    "高雄市": (120.3014, 22.6273),
+}
+
+
+def _affine_for_cwa_image(size: Tuple[int, int]) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """
+    根據使用者提供的三個錨點像素座標，建立 (lon,lat)->(x,y) 的仿射轉換矩陣。
+    size: (width,height) 僅用來區分兩組不同錨點。
+    """
+    width, height = size
+
+    if (width, height) == (450, 810):
+        # 450x810 錨點 (x,y)
+        p_tpe = (339, 55)
+        p_txg = (203, 258)
+        p_khh = (136, 546)
+    elif (width, height) == (315, 642):
+        # 315x642 錨點 (x,y)
+        p_tpe = (241, 42)
+        p_txg = (140, 201)
+        p_khh = (96, 428)
+    else:
+        raise ValueError(f"Unsupported CWA image size: {size}")
+
+    # 三個城市中心的 (lon,lat)
+    lonlat_tpe = _CITY_CENTER_LONLAT["臺北市"]
+    lonlat_txg = _CITY_CENTER_LONLAT["臺中市"]
+    lonlat_khh = _CITY_CENTER_LONLAT["高雄市"]
+
+    # 以 (lon,lat) 當作來源座標系
+    src1 = lonlat_tpe
+    src2 = lonlat_txg
+    src3 = lonlat_khh
+    dst1 = p_tpe
+    dst2 = p_txg
+    dst3 = p_khh
+
+    return compute_affine_from_three_points(src1, src2, src3, dst1, dst2, dst3)
+
+
+def project_townships_to_pixels(
+    township_to_lonlat: Dict[str, Tuple[float, float]],
+    size: Tuple[int, int],
+) -> Dict[str, Tuple[int, int]]:
+    """
+    將鄉鎮中心點 (lon,lat) 批次投影到指定 CWA 圖片尺寸的像素座標。
+    需要使用者提供的三錨點已內建，城市中心經緯度使用近似值。
+
+    township_to_lonlat: { "臺北市中正區": (lon,lat), ... }
+    size: (450,810) 或 (315,642)
+    """
+    matrix = _affine_for_cwa_image(size)
+    result: Dict[str, Tuple[int, int]] = {}
+    for town, lonlat in township_to_lonlat.items():
+        # 使用 (lon,lat) -> (x,y)
+        x, y = apply_affine(matrix, (lonlat[0], lonlat[1]))
+        result[town] = (x, y)
+    return result
+
+
+def build_pixel_maps_from_township_coords(township_coords: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Tuple[int, int]]]:
+    """
+    將使用者提供的 TOWNSHIP_COORDS (value 內含 'lon','lat') 轉為兩種尺寸的像素座標映射。
+
+    輸入格式：
+      {
+        "臺北市中正區": {"lat": 25.04, "lon": 121.51},
+        ...
+      }
+
+    回傳格式：
+      {
+        "450x810": { "臺北市中正區": (x,y), ... },
+        "315x642": { "臺北市中正區": (x,y), ... }
+      }
+    """
+    # 整理成 (lon,lat)
+    lonlat_map: Dict[str, Tuple[float, float]] = {}
+    for name, coord in township_coords.items():
+        lat = coord.get('lat')
+        lon = coord.get('lon')
+        if lat is None or lon is None:
+            continue
+        lonlat_map[name] = (float(lon), float(lat))
+
+    pixels_450x810 = project_townships_to_pixels(lonlat_map, (450, 810))
+    pixels_315x642 = project_townships_to_pixels(lonlat_map, (315, 642))
+
+    return {
+        "450x810": pixels_450x810,
+        "315x642": pixels_315x642,
+    }
+
 def analyze_qpf_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
     """
     Estimate rainfall intensity (mm/hr) by analyzing a square region and returning the min and max QPF values.
     """
     from server import config
     image = _download_image(image_url)
-    x_center, y_center = sample_xy
-
-    box_size = 20
-    half_box = box_size // 2
-
-    # Define the bounding box for the area
-    left = max(0, x_center - half_box)
-    top = max(0, y_center - half_box)
-    right = min(image.width, x_center + half_box)
-    bottom = min(image.height, y_center + half_box)
-
-    if left >= right or top >= bottom:
-        return None
-
-    qpf_values = []
     palette = list(config.QPF_COLOR_MAP.keys())
-
-    # Iterate over all pixels in the bounding box
-    for y in range(top, bottom):
-        for x in range(left, right):
-            rgb = image.getpixel((x, y))[:3]
-            nearest_color = _closest_color(rgb, palette)
-            qpf_value = config.QPF_COLOR_MAP.get(nearest_color)
-            # Exclude 0.0 values from min/max calculation unless it's the only value
-            if qpf_value is not None and qpf_value > 0:
-                qpf_values.append(qpf_value)
-
-    if not qpf_values:
-        # If no rain, return 0.0 for both min and max
-        return {"min": 0.0, "max": 0.0}
-
-    # Return the min and max QPF values found in the area
-    return {"min": min(qpf_values), "max": max(qpf_values)}
+    return _sample_circle_min_max(image, sample_xy, radius=12, palette=palette, value_map=config.QPF_COLOR_MAP)
 
 def analyze_ncdr_rain_from_image(image_url: str, sample_xy: Tuple[int, int]) -> Optional[Dict[str, float]]:
     """
@@ -192,38 +328,7 @@ def analyze_ncdr_rain_from_image(image_url: str, sample_xy: Tuple[int, int]) -> 
     """
     from server import config
     image = _download_image(image_url)
-    x_center, y_center = sample_xy
-
-    box_size = 20
-    half_box = box_size // 2
-
-    # Define the bounding box for the area
-    left = max(0, x_center - half_box)
-    top = max(0, y_center - half_box)
-    right = min(image.width, x_center + half_box)
-    bottom = min(image.height, y_center + half_box)
-
-    if left >= right or top >= bottom:
-        return None
-
-    qpf_values = []
     palette = list(config.NCDR_NOWCAST_COLOR_MAP.keys())
-
-    # Iterate over all pixels in the bounding box
-    for y in range(top, bottom):
-        for x in range(left, right):
-            rgb = image.getpixel((x, y))[:3]
-            nearest_color = _closest_color(rgb, palette)
-            qpf_value = config.NCDR_NOWCAST_COLOR_MAP.get(nearest_color)
-            # Exclude 0.0 values from min/max calculation unless it's the only value
-            if qpf_value is not None and qpf_value > 0:
-                qpf_values.append(qpf_value)
-
-    if not qpf_values:
-        # If no rain, return 0.0 for both min and max
-        return {"min": 0.0, "max": 0.0}
-
-    # Return the min and max QPF values found in the area
-    return {"min": min(qpf_values), "max": max(qpf_values)}
+    return _sample_circle_min_max(image, sample_xy, radius=12, palette=palette, value_map=config.NCDR_NOWCAST_COLOR_MAP)
 
 

@@ -145,6 +145,9 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
 
         # Image metrics from the consolidated cache
         image_metrics = jobs.CACHED_IMAGE_METRICS.get(decoded_county_name) or {}
+        # 兼容不同鍵名（作業程序可能存為 daily_rain/nowcast）
+        daily_rain = image_metrics.get("ncdr_daily_rain") or image_metrics.get("daily_rain")
+        nowcast = image_metrics.get("ncdr_nowcast") or image_metrics.get("nowcast")
 
         resp = {
             "county": decoded_county_name,
@@ -155,8 +158,8 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
             "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
             "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
-            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
-            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
+            "ncdr_nowcast": nowcast,
+            "ncdr_daily_rain": daily_rain,
         }
         logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
         return resp
@@ -241,6 +244,9 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
         # Attach county-derived metrics from the consolidated image metrics cache
         county_name = codes.resolve_county_from_township_name(decoded_township_name)
         image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
+        # 兼容不同鍵名（作業程序可能存為 daily_rain/nowcast）
+        daily_rain = image_metrics.get("ncdr_daily_rain") or image_metrics.get("daily_rain")
+        nowcast = image_metrics.get("ncdr_nowcast") or image_metrics.get("nowcast")
 
         response = {
             **forecast,
@@ -249,8 +255,8 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
             "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
             "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
-            "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
-            "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
+            "ncdr_nowcast": nowcast,
+            "ncdr_daily_rain": daily_rain,
         }
         
         # Format and send to Discord

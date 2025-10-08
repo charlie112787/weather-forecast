@@ -1,5 +1,8 @@
 import { COUNTY_NAME_TO_CODE, LOCATION_DATA, CODE_TO_TOWNSHIP_NAME } from './location_data.js';
-import { db } from './firebase.js'; // 匯入 db
+import { db } from './firebase.js';
+
+// 將 messaging 變數提升到共用作用域
+let messaging;
 
 document.addEventListener('DOMContentLoaded', () => {
     const appContent = document.getElementById('app-content');
@@ -7,63 +10,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const googleLoginBtn = document.getElementById('google-login-btn');
     const errorMessageDiv = document.getElementById('error-message');
 
-    // 處理重定向回來的登入結果 (必須在 onAuthStateChanged 之前處理)
-    firebase.auth().getRedirectResult().then(result => {
-        if (result.user) {
-            // 處理重定向回來的登入結果
-            const user = result.user;
-            console.log('Google 登入成功 (重定向):', user);
-
-            // 這裡的邏輯與 signInWithPopup 成功後的邏輯相同
-            const userDocRef = db.collection('users').doc(user.uid);
-            userDocRef.get().then(doc => {
-                if (!doc.exists) {
-                    console.log('首次登入，正在建立使用者資料...');
-                    userDocRef.set({
-                        displayName: user.displayName,
-                        email: user.email,
-                        photoURL: user.photoURL,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    }).then(() => {
-                        console.log('使用者資料建立成功！');
-                        if (window.location.pathname !== '/index.html' && window.location.pathname !== '/') {
-                            window.location.href = 'index.html'; // 確保重定向到主頁
-                        }
-                    }).catch(error => {
-                        console.error('建立使用者資料失敗:', error);
-                    });
-                } else {
-                    if (window.location.pathname !== '/index.html' && window.location.pathname !== '/') {
-                        window.location.href = 'index.html'; // 確保重定向到主頁
-                    }
-                }
-            }).catch(error => {
-                console.error('獲取使用者資料失敗:', error);
-            });
-        }
-    }).catch(error => {
-        console.error('處理重定向結果失敗:', error);
-        if (errorMessageDiv) {
-            errorMessageDiv.style.display = 'block';
-            errorMessageDiv.textContent = `登入失敗: ${error.message}`;
-        }
-    });
-
     // Firebase 登入狀態監聽器
     firebase.auth().onAuthStateChanged(user => {
         if (user) {
-            // 使用者已登入
             console.log('使用者已登入:', user.email);
             appContent.style.display = 'block';
             loginContent.style.display = 'none';
             initializeUserSettings(user);
             initializeFCM(user);
-
         } else {
-            // 使用者未登入
             console.log('使用者未登入');
             appContent.style.display = 'none';
-            loginContent.style.display = 'flex'; // 使用 flex 讓登入介面居中
+            loginContent.style.display = 'flex';
         }
     });
 
@@ -72,25 +30,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 使用 Google 帳號進行登入或註冊
+     * 使用 Google 帳號透過「懸浮視窗」進行登入
      */
     async function signInWithGoogle() {
         const auth = firebase.auth();
         const provider = new firebase.auth.GoogleAuthProvider();
-    
+
         googleLoginBtn.disabled = true;
         errorMessageDiv.style.display = 'none';
-    
+
         try {
-            // 將 signInWithRedirect 改為 signInWithPopup
+            // 使用 signInWithPopup 來彈出懸浮視窗
             const result = await auth.signInWithPopup(provider);
             const user = result.user;
-            console.log('Google 登入成功 (彈出視窗):', user);
-        
-            // 因為 Popup 會直接返回 user 物件，所以我們可以在這裡直接處理後續邏輯
+            console.log("Google 懸浮視窗登入成功:", user);
+            
+            // 登入成功後，onAuthStateChanged 會自動處理 UI 切換
+            // 我們可以在這裡處理首次登入的使用者資料建立
             const userDocRef = db.collection('users').doc(user.uid);
             const doc = await userDocRef.get();
-        
+
             if (!doc.exists) {
                 console.log('首次登入，正在建立使用者資料...');
                 await userDocRef.set({
@@ -101,8 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 console.log('使用者資料建立成功！');
             }
-            // 登入成功後，onAuthStateChanged 會自動處理頁面切換，所以這裡不需要重定向
-        
+
         } catch (error) {
             console.error('Google 登入失敗:', error);
             errorMessageDiv.style.display = 'block';
@@ -113,18 +71,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 初始化使用者設定功能 (縣市/鄉鎮選擇與儲存)
+     * 初始化使用者設定功能
      * @param {firebase.User} user - 當前登入的 Firebase 使用者物件
      */
     async function initializeUserSettings(user) {
-        // 直接使用從 firebase.js 匯出的 db
-        console.log('initializeUserSettings 呼叫，db 狀態:', typeof db, db);
-
-        if (typeof db.collection !== 'function') {
-            console.error('錯誤: db 物件沒有 collection 方法。db 的實際內容:', db);
-            return; // 提前終止，避免後續錯誤
-        }
-
         const countySelect = document.getElementById('county-select');
         const townshipSelect = document.getElementById('township-select');
         const saveSettingsBtn = document.getElementById('save-settings-btn');
@@ -136,67 +86,43 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const userDocRef = db.collection('users').doc(user.uid);
-        let currentTopic = null; // 用於追蹤當前訂閱的 Topic (現在僅用於邏輯判斷，實際訂閱需後端)
 
-        // 填充縣市選單
+        // --- 填充選單函式 ---
         function populateCountySelect() {
-            countySelect.innerHTML = '';
-            const defaultOption = document.createElement('option');
-            defaultOption.value = '';
-            defaultOption.textContent = '請選擇縣市';
-            countySelect.appendChild(defaultOption);
-
+            countySelect.innerHTML = '<option value="">請選擇縣市</option>';
             for (const countyName in COUNTY_NAME_TO_CODE) {
-                const option = document.createElement('option');
-                option.value = countyName; // 儲存縣市名稱
-                option.textContent = countyName;
-                countySelect.appendChild(option);
+                countySelect.innerHTML += `<option value="${countyName}">${countyName}</option>`;
             }
         }
 
-        // 填充鄉鎮選單
         function populateTownshipSelect(selectedCountyName) {
-            townshipSelect.innerHTML = '';
-            const defaultOption = document.createElement('option');
-            defaultOption.value = '';
-            defaultOption.textContent = '請選擇鄉鎮';
-            townshipSelect.appendChild(defaultOption);
-
+            townshipSelect.innerHTML = '<option value="">請選擇鄉鎮</option>';
             if (selectedCountyName && LOCATION_DATA[selectedCountyName]) {
                 for (const townshipName in LOCATION_DATA[selectedCountyName]) {
-                    const option = document.createElement('option');
-                    option.value = LOCATION_DATA[selectedCountyName][townshipName]; // 儲存代號
-                    option.textContent = townshipName;
-                    townshipSelect.appendChild(option);
+                    const code = LOCATION_DATA[selectedCountyName][townshipName];
+                    townshipSelect.innerHTML += `<option value="${code}">${townshipName}</option>`;
                 }
             }
         }
 
-        // 縣市選單變動時更新鄉鎮選單
-        countySelect.addEventListener('change', () => {
-            populateTownshipSelect(countySelect.value);
-        });
+        countySelect.addEventListener('change', () => populateTownshipSelect(countySelect.value));
 
-        populateCountySelect(); // 首次載入時填充縣市選單
-        populateTownshipSelect(countySelect.value); // 確保鄉鎮選單初始為空或根據預設縣市填充
+        populateCountySelect();
+        populateTownshipSelect(null);
 
         // 讀取使用者設定
         try {
             const doc = await userDocRef.get();
             if (doc.exists && doc.data().settings && doc.data().settings.townshipCode) {
                 const savedTownshipCode = doc.data().settings.townshipCode;
-                const fullTownshipName = CODE_TO_TOWNSHIP_NAME[savedTownshipCode]; // 例如 "臺北市中正區"
-
+                const fullTownshipName = CODE_TO_TOWNSHIP_NAME[savedTownshipCode];
                 if (fullTownshipName) {
-                    // 從完整的鄉鎮名稱中解析出縣市名稱
                     const savedCountyName = Object.keys(LOCATION_DATA).find(county => fullTownshipName.startsWith(county));
-                    
                     if (savedCountyName) {
                         countySelect.value = savedCountyName;
                         populateTownshipSelect(savedCountyName);
                         townshipSelect.value = savedTownshipCode;
-                        currentTopic = `weather_${savedTownshipCode}`; // 設定當前訂閱的 Topic
-                        console.log('已載入使用者預設地區代號:', savedTownshipCode);
+                        console.log('已載入使用者預設地區代碼:', savedTownshipCode);
                     }
                 }
             }
@@ -206,34 +132,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 儲存使用者設定
         saveSettingsBtn.addEventListener('click', async () => {
-            const selectedCountyName = countySelect.value;
             const selectedTownshipCode = townshipSelect.value;
+            settingsStatus.textContent = '儲存中...';
 
-            if (selectedCountyName && selectedTownshipCode) {
-                try {
-                    // 儲存縣市名稱和鄉鎮代號
-                    await userDocRef.set({
-                        settings: {
-                            countyName: selectedCountyName,
-                            townshipCode: selectedTownshipCode
-                        }
-                    }, { merge: true });
-                    settingsStatus.textContent = '設定已儲存！';
-                    settingsStatus.style.color = 'var(--accent-2)';
-                    console.log('使用者預設地區代號已儲存:', selectedTownshipCode);
-                    setTimeout(() => settingsStatus.textContent = '', 3000); // 3秒後清除訊息
+            if (!selectedTownshipCode) {
+                settingsStatus.textContent = '請選擇一個鄉鎮地區！';
+                settingsStatus.style.color = '#ffcccc';
+                return;
+            }
 
-                    // 獲取最新的 FCM Token 並發送到後端更新訂閱
-                    const latestToken = await messaging.getToken({ vapidKey: 'BK_Zl0M8cUguXf8WV1xI1U6qFQ7Aw2tmQqjnYuack1NEF-IjuW0HR9PYlqbaqb3JPblLqn9DANXfnDvtEHZANpY' });
-                    if (latestToken) {
-                        await sendTokenAndSettingsToBackend(user.uid, latestToken, userDocRef);
-                    }
+            try {
+                await userDocRef.set({
+                    settings: { townshipCode: selectedTownshipCode }
+                }, { merge: true });
 
-                } catch (error) {
-                    settingsStatus.textContent = '儲存失敗！';
-                    settingsStatus.style.color = '#ffcccc';
-                    console.error('儲存使用者設定失敗:', error);
+                console.log('使用者預設地區代碼已儲存:', selectedTownshipCode);
+                settingsStatus.textContent = '設定已儲存！';
+                settingsStatus.style.color = 'var(--accent-2)';
+                setTimeout(() => settingsStatus.textContent = '', 3000);
+
+                // 獲取最新的 FCM Token 並發送到後端更新訂閱
+                const latestToken = await messaging.getToken({ vapidKey: 'BOvUnXfY9tx_0ivPB7YGwU2fbeYaK66Gf3eLKg0NirKISO7wz8rbDZtkeNr449mabR-rahs7k5BgGaYH14Ga218' });
+                if (latestToken) {
+                    await sendTokenAndSettingsToBackend(user.uid, latestToken, selectedTownshipCode);
                 }
+            } catch (error) {
+                console.error('儲存使用者設定失敗:', error);
+                settingsStatus.textContent = '儲存失敗！';
+                settingsStatus.style.color = '#ffcccc';
             }
         });
     }
@@ -243,21 +169,18 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {firebase.User} user - 當前登入的 Firebase 使用者物件
      */
     async function initializeFCM(user) {
-        const messaging = firebase.messaging(); // 使用全域 firebase 物件
+        // 使用提升到上層的 messaging 變數
+        messaging = firebase.messaging();
 
-        // 請求通知權限
         try {
             const permission = await Notification.requestPermission();
             if (permission === 'granted') {
                 console.log('通知權限已授予。');
-                // 獲取 FCM 註冊 Token
-                // getToken 函數會自動處理 Service Worker 的註冊和激活
-                const currentToken = await messaging.getToken({ vapidKey: 'BOvUnXfY9tx_0ivPB7YGwU2fbeYaK66Gf3eLKg0NirKISO7wz8rbDZtkeNr449mabR-rahs7k5BgGaYH14Ga218' }); // 請替換為您的 VAPID Key
+                const currentToken = await messaging.getToken({ vapidKey: 'BOvUnXfY9tx_0ivPB7YGwU2fbeYaK66Gf3eLKg0NirKISO7wz8rbDZtkeNr449mabR-rahs7k5BgGaYH14Ga218' });
                 if (currentToken) {
                     console.log('FCM 註冊 Token:', currentToken);
-                    // TODO: 將 Token 儲存到 Firestore，以便後端直接發送通知給特定裝置
-                    // 並且將 Token 和使用者 UID 發送到後端，以便後端管理 Topic 訂閱
-                    await sendTokenAndSettingsToBackend(user.uid, currentToken); // 初始呼叫時不傳 townshipCode，讓函式自行讀取
+                    // 初始載入時，發送一次 Token 到後端 (不帶鄉鎮代碼)
+                    await sendTokenAndSettingsToBackend(user.uid, currentToken, null);
                 } else {
                     console.log('未獲取到 FCM 註冊 Token。');
                 }
@@ -266,29 +189,13 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('請求通知權限或獲取 Token 失敗:', error);
         }
 
-        // 處理前景訊息
+        // --- [已修正] ---
+        // 監聽前景訊息，但不再手動顯示通知
         messaging.onMessage(payload => {
-            console.log('前景訊息:', payload);
-            // 在前景時也顯示系統通知
-            if (payload.notification) {
-                const notificationTitle = payload.notification.title;
-                const notificationOptions = {
-                    body: payload.notification.body,
-                    icon: '/assets/icons/icon-192x192.png' // 使用與 Service Worker 相同的圖示
-                };
-
-                // 檢查通知權限，如果已授予則顯示通知
-                if (Notification.permission === 'granted') {
-                    new Notification(notificationTitle, notificationOptions);
-                } else if (Notification.permission !== 'denied') {
-                    // 如果尚未決定，則請求權限
-                    Notification.requestPermission().then(permission => {
-                        if (permission === 'granted') {
-                            new Notification(notificationTitle, notificationOptions);
-                        }
-                    });
-                }
-            }
+            console.log('前景訊息已收到:', payload);
+            // 當網頁處於前景時，我們只在主控台記錄訊息。
+            // 真正的系統通知將由 Service Worker (firebase-messaging-sw.js) 統一處理。
+            // 這樣可以避免重複顯示通知。
         });
     }
 
@@ -296,38 +203,45 @@ document.addEventListener('DOMContentLoaded', () => {
      * 將 FCM Token 和使用者設定發送到後端
      * @param {string} uid - 使用者 UID
      * @param {string} fcmToken - FCM 註冊 Token
-     * @param {string|null} townshipCode - 鄉鎮代碼，如果為 null 則從 Firestore 讀取
+     * @param {string|null} townshipCode - 鄉鎮代碼
      */
-    async function sendTokenAndSettingsToBackend(uid, fcmToken, townshipCode = null) {
-        try {
-            let finalTownshipCode = townshipCode;
-            if (finalTownshipCode === null) {
-                const userDocRef = db.collection('users').doc(uid);
-                const doc = await userDocRef.get();
-                if (doc.exists && doc.data().settings) {
-                    finalTownshipCode = doc.data().settings.townshipCode;
-                }
-            }
+    async function sendTokenAndSettingsToBackend(uid, fcmToken, townshipCode) {
+        const apiUrl = 'https://twa-api-server.cracks666666.com/api/fcm/register';
 
-            const response = await fetch('http://localhost:7800/api/fcm/register', {
+        // 加入防禦性檢查
+        if (townshipCode && !/^[A-Z]{3}-\d{3}$/.test(townshipCode)) {
+            console.error(`偵測到無效的 townshipCode: "${townshipCode}"。請求已中止。`);
+            return;
+        }
+
+        const payload = {
+            uid: uid,
+            fcmToken: fcmToken,
+            townshipCode: townshipCode
+        };
+
+        console.log("準備發送到後端的資料:", payload);
+
+        try {
+            const response = await fetch(apiUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    uid: uid,
-                    fcmToken: fcmToken,
-                    townshipCode: finalTownshipCode // 如果有選擇鄉鎮，則發送
-                }),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
             });
+            
+            console.log('Fetch 請求已發送。等待伺服器回應...');
 
             if (response.ok) {
-                console.log('FCM Token 和設定已成功發送到後端。');
+                const result = await response.json();
+                console.log('後端成功回應:', result);
             } else {
-                console.error('發送 FCM Token 和設定到後端失敗:', response.status, response.statusText);
+                // 嘗試讀取錯誤訊息內文
+                const errorText = await response.text();
+                console.error(`發送 FCM Token 和設定到後端失敗: 狀態碼 ${response.status}`, errorText);
             }
         } catch (error) {
-            console.error('發送 FCM Token 和設定到後端時發生錯誤:', error);
+            console.error('發送 FCM Token 和設定到後端時發生網路錯誤:', error);
         }
     }
 });
+

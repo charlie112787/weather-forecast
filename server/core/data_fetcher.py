@@ -81,7 +81,6 @@ def get_cwa_township_forecast_data(city: str):
             data = response.json()
             records = data.get('records', {})
             
-            # Robust parsing for both 'Locations' and 'location' keys
             location_groups = records.get('Locations', records.get('locations'))
             if isinstance(location_groups, list):
                 for loc_group in location_groups:
@@ -89,7 +88,6 @@ def get_cwa_township_forecast_data(city: str):
                         locations = loc_group.get('Location', loc_group.get('location'))
                         if isinstance(locations, list):
                             all_locations.extend(locations)
-            # Fallback for flat structure
             elif 'location' in records:
                  all_locations.extend(records['location'])
 
@@ -101,7 +99,7 @@ def get_cwa_township_forecast_data(city: str):
 
     except requests.exceptions.RequestException as e:
         print(f"CRITICAL: Error fetching CWA township data for {city}. Error: {e}")
-        return None # Fail fast
+        return None
 
     if not all_locations:
         print(f"Warning: No locations found for {city} after successful fetch.")
@@ -130,23 +128,4 @@ def get_cwa_county_forecast_data():
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA county data: {e}")
-        return None
-
-def get_cwa_qpf_data():
-    """
-    Fetches quantitative precipitation forecast data from the CWA API.
-    """
-    session = create_session()
-    url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
-    params = {"Authorization": config.CWA_API_KEY}
-    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
-    
-    try:
-        print("Fetching CWA QPF data...")
-        response = session.get(url, params=params, verify=verify)
-        response.raise_for_status()
-        print("Successfully fetched CWA QPF data.")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching CWA QPF data: {e}")
         return None

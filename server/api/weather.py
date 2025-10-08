@@ -6,6 +6,7 @@ from core import calculation
 from scheduler import jobs
 from core import codes
 from services import discord_sender
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +267,7 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
         - QPF 6h (min/max): {response.get('qpf6_min_mm_per_hr', 'N/A')} / {response.get('qpf6_max_mm_per_hr', 'N/A')}
         - AQI Level: {response.get('aqi_level', 'N/A')}
         """
-        discord_sender.send_to_discord(message)
+        await asyncio.to_thread(discord_sender.send_to_discord, message)
 
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
@@ -338,7 +339,7 @@ async def notify_township(township_name: str):
         )
 
         try:
-            discord_sender.send_to_discord(msg)
+            await asyncio.to_thread(discord_sender.send_to_discord, msg)
             logger.info(f"Successfully sent Discord notification for township: {decoded_township_name}")
             return {"ok": True}
         except Exception as e:

@@ -46,13 +46,10 @@ async def _fetch_weather_data(county_data=None):
     if county_data is None:
         county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
 
-    if county_data and isinstance(county_data, dict):
-        print(f"Debug: county_data keys: {county_data.keys()}")
-        records = county_data.get('records', {})
-        locations = records.get('location', [])
-        print(f"Debug: Found {len(locations)} locations in county_data.")
-    else:
-        print("Debug: county_data is None or not a dict.")
+    print(f"Debug: county_data keys: {county_data.keys()}")
+    records = county_data.get('records', {})
+    locations = records.get('location', [])
+    print(f"Debug: Found {len(locations)} locations in county_data.")
 
     cities = list(data_fetcher.CWA_TOWNSHIP_CODES.keys())
     township_data_tasks = []
@@ -114,13 +111,7 @@ async def fetch_data_job():
     global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP, CACHED_FINAL_JSON
 
     try:
-        # Fetch all data concurrently
-        results = await asyncio.gather(
-            asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data),
-            asyncio.to_thread(data_fetcher.get_cwa_qpf_data)
-        )
-        county_data, qpf_data = results
-
+        county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
         weather_data = await _fetch_weather_data(county_data)
         
         if not weather_data or not weather_data[1]:
@@ -132,11 +123,10 @@ async def fetch_data_job():
         CACHED_CWA_TOWNSHIP_DATA = all_township_data
         CACHED_TOWNSHIP_MAP = township_weather
         CACHED_WEATHER_DATA.update({
-            'county_weather': county_weather,
-            'township_weather': township_weather,
-            'qpf_data': qpf_data,  # Cache the QPF data
-            'update_time': datetime.datetime.now().isoformat()
-        })
+                'county_weather': county_weather,
+                'township_weather': township_weather,
+                'update_time': datetime.datetime.now().isoformat()
+            })
     except Exception as e:
         print(f"Error in fetch_data_job while fetching weather data: {e}")
         return
@@ -145,7 +135,6 @@ async def fetch_data_job():
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
 
-        # Resolve image URLs
         pop12_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS)
         pop6_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS)
         daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
@@ -161,7 +150,6 @@ async def fetch_data_job():
             if not sample_xy:
                 continue
 
-            # Analyze PoP12 and PoP6
             pop12_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
             ) if pop12_url else None
@@ -169,12 +157,10 @@ async def fetch_data_job():
                 image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
             ) if pop6_url else None
 
-            # Analyze daily rain
             daily_rain_data = await asyncio.to_thread(
                 image_analyzer.analyze_qpf_from_image, daily_rain_url, sample_xy
             ) if daily_rain_url else None
 
-            # Analyze nowcast
             nowcast_data = []
             if nowcast_base_url:
                 base_url = nowcast_base_url.rsplit('_', 1)[0]
@@ -182,7 +168,6 @@ async def fetch_data_job():
                 for url in nowcast_urls:
                     nowcast_data.append(await asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy))
 
-            # Analyze AQI
             aqi_level = None
             if aqi_url:
                 box_size = 10

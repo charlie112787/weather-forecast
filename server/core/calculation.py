@@ -19,14 +19,12 @@ def get_forecast_for_township(township_name: str, township_map: dict):
         A dictionary containing the processed forecast, or None if not found.
     """
     if not township_map:
-        print("Error: Township map is not available or empty.")
         return None
 
     normalized_name = _normalize_name(township_name)
     cwa_location_data = township_map.get(normalized_name)
 
     if not cwa_location_data:
-        print(f"Error: Township '{township_name}' not found in the map. Normalized name: '{normalized_name}'")
         return None
 
     # 2) Extract weather elements

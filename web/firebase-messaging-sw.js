@@ -1,7 +1,6 @@
 importScripts('https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js');
 importScripts('https://www.gstatic.com/firebasejs/8.10.0/firebase-messaging.js');
 
-// 這是您從 Firebase 控制台獲取的設定金鑰 (Service Worker 需要自己的初始化)
 const firebaseConfig = {
   apiKey: "AIzaSyB3Q74U0IH8xe5ucUnkhzuBY9Inv26SGQc",
   authDomain: "weather-forecast-c62c3.firebaseapp.com",
@@ -12,21 +11,44 @@ const firebaseConfig = {
   measurementId: "G-KS86ZBCF1K"
 };
 
-// Service Worker 中使用相容性語法初始化 Firebase
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-// 處理背景訊息
 messaging.onBackgroundMessage(payload => {
-  console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  // 自定義通知顯示邏輯
-  const notificationTitle = payload.notification.title;
-  const notificationOptions = {
-    body: payload.notification.body,
-    icon: '/assets/icons/icon-192x192.png' // 您可以設定通知圖示
-  };
+  console.log('[SW] Received background message ', payload);
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  // --- [新增的關鍵邏輯] ---
+  // 檢查是否有任何客戶端(分頁)是可見的
+  const promiseChain = clients.matchAll({
+    type: 'window',
+    includeUncontrolled: true
+  }).then(windowClients => {
+    let isAppInForeground = false;
+    for (let i = 0; i < windowClients.length; i++) {
+      const windowClient = windowClients[i];
+      // 如果有任何一個分頁是可見的，就視為前景
+      if (windowClient.visibilityState === 'visible') {
+        isAppInForeground = true;
+        break;
+      }
+    }
+
+    if (isAppInForeground) {
+      console.log('[SW] App is in the foreground, skipping notification.');
+      // 如果網站在前景，就不顯示通知，讓 main.js 去處理
+      return;
+    }
+
+    console.log('[SW] App is in the background, showing notification.');
+    // 只有當網站不在前景時，才由 Service Worker 顯示通知
+    const notificationTitle = payload.notification.title;
+    const notificationOptions = {
+      body: payload.notification.body,
+      icon: '/assets/icons/icon-192x192.png'
+    };
+    return self.registration.showNotification(notificationTitle, notificationOptions);
+  });
+
+  return promiseChain;
 });
 
-console.log('我是 Service Worker，我已經被喚醒！');

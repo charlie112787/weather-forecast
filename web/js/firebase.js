@@ -8,10 +8,10 @@ const firebaseConfig = {
   measurementId: "G-KS86ZBCF1K"
 };
 
-// 初始化 Firebase App (使用相容性 SDK 的全域 firebase 物件)
+// 初始化 Firebase App
 firebase.initializeApp(firebaseConfig);
 console.log('Firebase App initialized:', firebase.app());
 
-// 初始化 Firestore (使用相容性 SDK 的全域 firebase 物件)
+// 初始化並導出 Firestore
 export const db = firebase.firestore();
 console.log('Firestore DB initialized:', db);

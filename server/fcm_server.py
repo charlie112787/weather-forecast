@@ -31,12 +31,16 @@ app = FastAPI(
 )
 
 # 添加 CORS 中間件
+# fcm_server.py
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:9000"], # 允許前端的來源
+    allow_origins=[
+        "https://taiwan-weather-alert.pages.dev" # <-- 把你的 HTTPS 網址加進來
+    ],
     allow_credentials=True,
-    allow_methods=["*"], # 允許所有 HTTP 方法
-    allow_headers=["*"], # 允許所有請求頭
+    allow_methods=["*"], # 允許所有方法 (包含 OPTIONS)
+    allow_headers=["*"], # 允許所有標頭
 )
 
 class FcmRegistration(BaseModel):

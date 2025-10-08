@@ -114,7 +114,13 @@ async def fetch_data_job():
     global CACHED_WEATHER_DATA, CACHED_IMAGE_METRICS, CACHED_CWA_TOWNSHIP_DATA, CACHED_TOWNSHIP_MAP, CACHED_FINAL_JSON
 
     try:
-        county_data = await asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data)
+        # Fetch all data concurrently
+        results = await asyncio.gather(
+            asyncio.to_thread(data_fetcher.get_cwa_county_forecast_data),
+            asyncio.to_thread(data_fetcher.get_cwa_qpf_data)
+        )
+        county_data, qpf_data = results
+
         weather_data = await _fetch_weather_data(county_data)
         
         if not weather_data or not weather_data[1]:
@@ -126,10 +132,11 @@ async def fetch_data_job():
         CACHED_CWA_TOWNSHIP_DATA = all_township_data
         CACHED_TOWNSHIP_MAP = township_weather
         CACHED_WEATHER_DATA.update({
-                'county_weather': county_weather,
-                'township_weather': township_weather,
-                'update_time': datetime.datetime.now().isoformat()
-            })
+            'county_weather': county_weather,
+            'township_weather': township_weather,
+            'qpf_data': qpf_data,  # Cache the QPF data
+            'update_time': datetime.datetime.now().isoformat()
+        })
     except Exception as e:
         print(f"Error in fetch_data_job while fetching weather data: {e}")
         return
@@ -138,15 +145,12 @@ async def fetch_data_job():
         if config.TESSERACT_CMD:
             image_analyzer.configure_tesseract_cmd(config.TESSERACT_CMD)
 
-        qpf12_url = await asyncio.to_thread(
-            image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS
-        )
-        qpf6_url = await asyncio.to_thread(
-            image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS
-        )
-        aqi_url = await asyncio.to_thread(
-            image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS
-        )
+        # Resolve image URLs
+        pop12_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.POP12_URL_PATTERNS)
+        pop6_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.POP6_URL_PATTERNS)
+        daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
+        nowcast_base_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN)
+        aqi_url = await asyncio.to_thread(image_url_resolver.resolve_latest_url, config.AQI_URL_PATTERNS)
 
         image_metrics = {}
         if not (config.IMAGE_SAMPLE_COORDS):
@@ -157,13 +161,28 @@ async def fetch_data_job():
             if not sample_xy:
                 continue
 
-            qpf12_data = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image, qpf12_url, sample_xy
-            ) if qpf12_url else None
-            qpf6_data = await asyncio.to_thread(
-                image_analyzer.analyze_qpf_from_image, qpf6_url, sample_xy
-            ) if qpf6_url else None
+            # Analyze PoP12 and PoP6
+            pop12_data = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, pop12_url, sample_xy
+            ) if pop12_url else None
+            pop6_data = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, pop6_url, sample_xy
+            ) if pop6_url else None
 
+            # Analyze daily rain
+            daily_rain_data = await asyncio.to_thread(
+                image_analyzer.analyze_qpf_from_image, daily_rain_url, sample_xy
+            ) if daily_rain_url else None
+
+            # Analyze nowcast
+            nowcast_data = []
+            if nowcast_base_url:
+                base_url = nowcast_base_url.rsplit('_', 1)[0]
+                nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
+                for url in nowcast_urls:
+                    nowcast_data.append(await asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy))
+
+            # Analyze AQI
             aqi_level = None
             if aqi_url:
                 box_size = 10
@@ -174,68 +193,15 @@ async def fetch_data_job():
                 )
 
             image_metrics[county] = {
-                "qpf12_max_mm_per_hr": qpf12_data.get("max") if qpf12_data else None,
-                "qpf12_min_mm_per_hr": qpf12_data.get("min") if qpf12_data else None,
-                "qpf6_max_mm_per_hr": qpf6_data.get("max") if qpf6_data else None,
-                "qpf6_min_mm_per_hr": qpf6_data.get("min") if qpf6_data else None,
+                "qpf12_max_mm_per_hr": pop12_data.get("max") if pop12_data else None,
+                "qpf12_min_mm_per_hr": pop12_data.get("min") if pop12_data else None,
+                "qpf6_max_mm_per_hr": pop6_data.get("max") if pop6_data else None,
+                "qpf6_min_mm_per_hr": pop6_data.get("min") if pop6_data else None,
+                "daily_rain": daily_rain_data,
+                "nowcast": nowcast_data,
                 "aqi_level": aqi_level,
             }
         
-        try:
-            print("Starting NCDR daily rain analysis...")
-            daily_rain_url = image_url_resolver.resolve_ncdr_daily_rain_url()
-            if daily_rain_url and image_url_resolver._is_image_url(daily_rain_url):
-                daily_rain_tasks = {}
-                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
-                    if sample_xy:
-                        daily_rain_tasks[county] = asyncio.to_thread(
-                            image_analyzer.analyze_ncdr_rain_from_image, daily_rain_url, sample_xy
-                        )
-                
-                daily_rain_results = await asyncio.gather(*daily_rain_tasks.values())
-                county_results = dict(zip(daily_rain_tasks.keys(), daily_rain_results))
-
-                for county, data in county_results.items():
-                    if county in image_metrics and data:
-                        image_metrics[county]['ncdr_daily_rain'] = data
-            else:
-                print("Could not resolve or validate NCDR daily rain URL. Skipping.")
-        except Exception as e:
-            print(f"Error during NCDR daily rain analysis: {e}")
-
-        try:
-            print("Starting NCDR nowcast analysis...")
-            latest_f01h_url = await asyncio.to_thread(
-                image_url_resolver.resolve_latest_url, config.NCDR_NOWCAST_URL_PATTERN
-            )
-
-            if latest_f01h_url:
-                print(f"Found latest NCDR nowcast series: {latest_f01h_url}")
-                base_url = latest_f01h_url.rsplit('_', 1)[0]
-                nowcast_urls = [f"{base_url}_f{h:02d}h.gif" for h in range(1, 13)]
-
-                for county, sample_xy in config.IMAGE_SAMPLE_COORDS.items():
-                    if not sample_xy:
-                        continue
-                    
-                    nowcast_tasks = []
-                    for url in nowcast_urls:
-                        nowcast_tasks.append(
-                            asyncio.to_thread(image_analyzer.analyze_ncdr_rain_from_image, url, sample_xy)
-                        )
-                    
-                    hourly_forecasts = await asyncio.gather(*nowcast_tasks)
-
-                    if county in image_metrics:
-                        image_metrics[county]['ncdr_nowcast'] = [
-                            {"hour": i + 1, **(data or {})}
-                            for i, data in enumerate(hourly_forecasts)
-                        ]
-            else:
-                print("Could not resolve NCDR nowcast URL. Skipping.")
-        except Exception as e:
-            print(f"Error during NCDR nowcast analysis: {e}")
-
         CACHED_IMAGE_METRICS.clear()
         CACHED_IMAGE_METRICS.update(image_metrics)
         
@@ -296,8 +262,8 @@ async def check_and_send_notifications():
 
     forecast = calculation.get_forecast_for_township(user_township, CACHED_TOWNSHIP_MAP)
 
-    if forecast and forecast["cwa_forecast"]["chance_of_rain_12h"]:
-        pop_value_str = forecast["cwa_forecast"]["chance_of_rain_12h"]
+    if forecast and forecast.get("chance_of_rain_12h"):
+        pop_value_str = forecast["chance_of_rain_12h"]
         if pop_value_str and pop_value_str.isdigit():
             pop_value = int(pop_value_str)
             if pop_value > 50:

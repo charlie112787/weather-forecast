@@ -131,3 +131,22 @@ def get_cwa_county_forecast_data():
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA county data: {e}")
         return None
+
+def get_cwa_qpf_data():
+    """
+    Fetches quantitative precipitation forecast data from the CWA API.
+    """
+    session = create_session()
+    url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
+    params = {"Authorization": config.CWA_API_KEY}
+    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
+    
+    try:
+        print("Fetching CWA QPF data...")
+        response = session.get(url, params=params, verify=verify)
+        response.raise_for_status()
+        print("Successfully fetched CWA QPF data.")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching CWA QPF data: {e}")
+        return None

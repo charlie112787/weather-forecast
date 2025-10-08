@@ -251,6 +251,23 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
             "ncdr_nowcast": image_metrics.get("ncdr_nowcast"),
             "ncdr_daily_rain": image_metrics.get("ncdr_daily_rain"),
         }
+        
+        # Format and send to Discord
+        message = f"""
+        **Weather Report for {response['township']}**
+
+        **CWA Forecast:**
+        - Temperature: {response['cwa_forecast']['temperature']}
+        - Weather: {response['cwa_forecast']['weather_description']}
+        - 12h Rain Chance: {response['cwa_forecast'].get('chance_of_rain_12h', 'N/A')}
+
+        **Image Analysis:**
+        - QPF 12h (min/max): {response.get('qpf12_min_mm_per_hr', 'N/A')} / {response.get('qpf12_max_mm_per_hr', 'N/A')}
+        - QPF 6h (min/max): {response.get('qpf6_min_mm_per_hr', 'N/A')} / {response.get('qpf6_max_mm_per_hr', 'N/A')}
+        - AQI Level: {response.get('aqi_level', 'N/A')}
+        """
+        discord_sender.send_to_discord(message)
+
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
 

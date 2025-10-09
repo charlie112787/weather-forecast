@@ -142,6 +142,12 @@ CWA_ANCHORS_450x810 = {
     "高雄市": (136, 546),
 }
 
+# --- Debug sample saving ---
+# 將分析時的圖片與取樣圓位置輸出成檔案（預設關閉）
+DEBUG_SAVE_SAMPLES = True
+DEBUG_SAVE_DIR = os.path.join(BASE_DIR, "samples")
+DEBUG_SAVE_PER_TOWNSHIP = True
+
 CWA_ANCHORS_315x642 = {
     "臺北市": (241, 42),
     "臺中市": (140, 201),

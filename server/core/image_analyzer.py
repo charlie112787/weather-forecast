@@ -2,6 +2,8 @@ import io
 from typing import Optional, Tuple, Dict, List
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from PIL import Image, ImageFilter, ImageOps
 
 try:
@@ -12,7 +14,11 @@ except ImportError:  # Optional at import time; function will raise if used with
 
 def _download_image(image_url: str) -> Image.Image:
     from server import config
-    response = requests.get(image_url, timeout=15, verify=getattr(config, "REQUESTS_VERIFY_SSL", True))
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("http://", HTTPAdapter(max_retries=retries))
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+    response = session.get(image_url, timeout=20, verify=getattr(config, "REQUESTS_VERIFY_SSL", True))
     response.raise_for_status()
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
@@ -173,6 +179,36 @@ def _sample_circle_min_max(image: Image.Image, center_xy: Tuple[int, int], radiu
     return {"min": min(qpf_values), "max": max(qpf_values)}
 
 
+def save_overlay(image_url: str, centers: List[Tuple[int, int]], radius: int, out_path: str) -> None:
+    """
+    下載圖片並在指定座標畫上取樣圓，存檔以便檢視。
+    """
+    try:
+        from PIL import ImageDraw
+        base = _download_image(image_url).convert("RGBA")
+        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        # 畫法：半透明紅色實心 + 黑色外框 + 十字準星
+        for (cx, cy) in centers:
+            if cx is None or cy is None:
+                continue
+            if cx < 0 or cy < 0 or cx >= base.width or cy >= base.height:
+                continue
+            bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+            # Draw a solid red circle as requested by the user.
+            draw.ellipse(bbox, fill=(255, 0, 0, 255))
+        img = Image.alpha_composite(base, overlay).convert("RGB")
+        # 確保輸出目錄存在
+        import os
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        # 一律用 PNG 以保留顯示品質
+        if not out_path.lower().endswith('.png'):
+            out_path = out_path + '.png'
+        img.save(out_path)
+    except Exception:
+        pass
+
+
 def compute_affine_from_three_points(
     src1: Tuple[float, float], src2: Tuple[float, float], src3: Tuple[float, float],
     dst1: Tuple[float, float], dst2: Tuple[float, float], dst3: Tuple[float, float],
@@ -192,8 +228,9 @@ def compute_affine_from_three_points(
         D = x1*(y2*1 - y3*1) - y1*(x2*1 - x3*1) + 1*(x2*y3 - x3*y2)
         if D == 0:
             raise ValueError("Source points are collinear")
-        Da = u1*(y2*1 - y3*1) - y1*(u2*1 - u3*1) + 1*(x2*u3 - x3*u2)
-        Db = x1*(u2*1 - u3*1) - u1*(x2*1 - x3*1) + 1*(x2*y3 - x3*y2)  # reuse term for stability
+        # Corrected determinants for a and b using Cramer's rule
+        Da = u1 * (y2 - y3) - y1 * (u2 - u3) + 1 * (u2 * y3 - u3 * y2)
+        Db = x1 * (u2 - u3) - u1 * (x2 - x3) + 1 * (x2 * u3 - x3 * u2)
         Dt = x1*(y2*u3 - y3*u2) - y1*(x2*u3 - x3*u2) + u1*(x2*y3 - x3*y2)
         a = Da / D
         b = Db / D
@@ -214,47 +251,43 @@ def apply_affine(matrix: Tuple[Tuple[float, float, float], Tuple[float, float, f
     return int(round(x2)), int(round(y2))
 
 
-# --- Taiwan city center approximate coordinates (lon, lat) ---
-_CITY_CENTER_LONLAT: Dict[str, Tuple[float, float]] = {
-    # 以市府/市中心近似值；如需更精準可替換
-    "臺北市": (121.5637, 25.0377),
-    "臺中市": (120.6736, 24.1477),
-    "高雄市": (120.3014, 22.6273),
+# --- Taiwan geographic anchor points (lon, lat) ---
+_GEOGRAPHIC_ANCHORS: Dict[str, Tuple[float, float]] = {
+    "North": (121.538, 25.297),  # Fuguijiao Cape
+    "East": (122.00, 25.009),   # Sandiajiao Cape
+    "South": (120.855, 21.904),  # Eluanbi
 }
 
 
 def _affine_for_cwa_image(size: Tuple[int, int]) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """
-    根據使用者提供的三個錨點像素座標，建立 (lon,lat)->(x,y) 的仿射轉換矩陣。
+    根據台灣本島最北、最東、最南三個點的像素座標，建立 (lon,lat)->(x,y) 的仿射轉換矩陣。
     size: (width,height) 僅用來區分兩組不同錨點。
     """
     width, height = size
 
+    # Get geographic coordinates for the anchors
+    lonlat_north = _GEOGRAPHIC_ANCHORS["North"]
+    lonlat_east = _GEOGRAPHIC_ANCHORS["East"]
+    lonlat_south = _GEOGRAPHIC_ANCHORS["South"]
+
     if (width, height) == (450, 810):
-        # 450x810 錨點 (x,y)
-        p_tpe = (339, 55)
-        p_txg = (203, 258)
-        p_khh = (136, 546)
+        # User-provided pixel coordinates for 450x810 map
+        p_north = (335, 5)
+        p_east = (435, 73)
+        p_south = (189, 803)
     elif (width, height) == (315, 642):
-        # 315x642 錨點 (x,y)
-        p_tpe = (241, 42)
-        p_txg = (140, 201)
-        p_khh = (96, 428)
+        # User-provided pixel coordinates for 315x642 map
+        p_north = (237, 0)
+        p_east = (311, 55)
+        p_south = (132, 637)
     else:
-        raise ValueError(f"Unsupported CWA image size: {size}")
+        # Fallback or error for unsupported sizes
+        raise ValueError(f"Unsupported CWA image size for affine transform: {size}")
 
-    # 三個城市中心的 (lon,lat)
-    lonlat_tpe = _CITY_CENTER_LONLAT["臺北市"]
-    lonlat_txg = _CITY_CENTER_LONLAT["臺中市"]
-    lonlat_khh = _CITY_CENTER_LONLAT["高雄市"]
-
-    # 以 (lon,lat) 當作來源座標系
-    src1 = lonlat_tpe
-    src2 = lonlat_txg
-    src3 = lonlat_khh
-    dst1 = p_tpe
-    dst2 = p_txg
-    dst3 = p_khh
+    # Define source (lon, lat) and destination (pixel x, y) points
+    src1, src2, src3 = lonlat_north, lonlat_east, lonlat_south
+    dst1, dst2, dst3 = p_north, p_east, p_south
 
     return compute_affine_from_three_points(src1, src2, src3, dst1, dst2, dst3)
 
@@ -330,5 +363,6 @@ def analyze_ncdr_rain_from_image(image_url: str, sample_xy: Tuple[int, int]) -> 
     image = _download_image(image_url)
     palette = list(config.NCDR_NOWCAST_COLOR_MAP.keys())
     return _sample_circle_min_max(image, sample_xy, radius=12, palette=palette, value_map=config.NCDR_NOWCAST_COLOR_MAP)
+
 
 

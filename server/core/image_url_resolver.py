@@ -2,12 +2,18 @@ from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 def _is_image_url(url: str, timeout_seconds: int = 10) -> bool:
     from server import config
     try:
-        resp = requests.head(
+        session = requests.Session()
+        retries = Retry(total=2, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503, 504])
+        session.mount("http://", HTTPAdapter(max_retries=retries))
+        session.mount("https://", HTTPAdapter(max_retries=retries))
+        resp = session.head(
             url,
             timeout=timeout_seconds,
             allow_redirects=True,
@@ -16,7 +22,7 @@ def _is_image_url(url: str, timeout_seconds: int = 10) -> bool:
         if resp.status_code == 200 and 'image' in (resp.headers.get('Content-Type') or '').lower():
             return True
         # Some servers do not support HEAD properly; try GET with small timeout
-        resp = requests.get(
+        resp = session.get(
             url,
             timeout=timeout_seconds,
             stream=True,

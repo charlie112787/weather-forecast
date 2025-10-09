@@ -56,12 +56,16 @@ def generate_unified_json():
                 element_name = element.get('elementName')
                 time_data = element.get('time', [{}])[0]
                 
-                if element_name == '6小時降雨機率':
-                    pop6h = time_data.get('elementValue', [{}])[0].get('value')
-                elif element_name == '12小時降雨機率':
-                    pop12h = time_data.get('elementValue', [{}])[0].get('value')
-                elif element_name == '天氣現象':
+                if element_name == '天氣現象':
                     weather_description = time_data.get('elementValue', [{}])[0].get('value')
+                # The CWA township data provides PoP in 3-hour intervals.
+                elif element_name == '3小時降雨機率':
+                    pop_value = time_data.get('elementValue', [{}])[0].get('value')
+                    # Use the first 3-hour value for both 6h and 12h for now.
+                    if pop6h is None: # Only assign once
+                        pop6h = pop_value
+                    if pop12h is None: # Only assign once
+                        pop12h = pop_value
 
         # Assemble all data into a single object
         township_data_object = {

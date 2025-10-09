@@ -38,7 +38,7 @@ POP6_IMAGE_URL = RAIN_PROBABILITY_IMAGE_URL
 #   "https://example.cwa.gov.tw/pop6_%Y%m%d%H.png"
 POP12_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_12_%Y%m%d%H.png"]  # type: ignore[var-annotated]
 POP6_URL_PATTERNS = ["https://npd.cwa.gov.tw/NPD/image/BC_QPF_06_%Y%m%d%H.png"]   # type: ignore[var-annotated]
-AQI_URL_PATTERNS = ["https://airtw.epa.gov.tw/EnvStatus/map_static_img/AQI_Day.png"]    # type: ignore[var-annotated]
+AQI_URL_PATTERNS = ["https://airtw.moenv.gov.tw/ModelSimulate/%Y%m%d/output_AQI_%Y%m%d%H0000.png"]    # type: ignore[var-annotated]
 
 # NCDR Nowcast URL pattern (checks for the first hour image to find the series)
 NCDR_NOWCAST_URL_PATTERN = ["https://watch.ncdr.nat.gov.tw/00_Wxmap/7F17_NCDRQPF_12H/%Y%m/%Y%m%d/%Y%m%d%H/%Y%m%d%H_f01h.gif"]

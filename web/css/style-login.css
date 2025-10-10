@@ -1,6 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap");
 
-/* ===== 基本樣式 ===== */
 * {
   margin: 0;
   padding: 0;
@@ -8,161 +7,175 @@
   font-family: "Poppins", sans-serif;
 }
 
-/* ===== 背景與置中設定 ===== */
-body {
+html { scroll-behavior: smooth; }
+
+/* ===== 背景動畫 - 夜空漸層 + 星光 ===== */
+.loginhomepage {
   display: flex;
-  flex-direction: column; /* 讓 header 在上、登入框在中、footer 在下 */
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: url(../image/image/homepage/homepage\ background.png) no-repeat center center fixed;
-  background-size: cover;
+  width: 100%;
+  background: linear-gradient(180deg, #0a0a1f, #1b2735, #000000, #202020);
+  background-size: 400% 400%;
+  animation: bodyGradient 3s ease infinite;
   color: white;
-}
-
-/* ===== Header ===== */
-header {
-  background: transparent; /* 無白底 */
-  width: 100%;
-  text-align: center;
+  overflow: hidden;
   position: relative;
-  top: 0;
-  left: 0;
-  height: auto;
-  margin-bottom: 40px;
 }
 
-header img {
-  max-width: 100%;
-  margin-top: 23px;
-  position: relative;
-  left: 30px;
-  padding: 5px;
+@keyframes bodyGradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
-/* ===== 登入框樣式 ===== */
-.wrapper {
-  width: 420px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-radius: 16px;
-  backdrop-filter: blur(15px);
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
-  color: #fff;
-  padding: 40px;
-  text-align: center;
-}
-
-/* ===== 標題 ===== */
-.wrapper h1 {
-  font-size: 36px;
-  text-align: center;
-  margin-bottom: 20px;
-}
-
-/* ===== 輸入框區 ===== */
-.input-box {
-  position: relative;
-  width: 100%;
-  height: 50px;
-  margin: 20px 0;
-}
-
-.input-box input {
+/* ===== 星光閃爍 ===== */
+.stars {
+  position: absolute;
   width: 100%;
   height: 100%;
-  background: transparent;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-radius: 40px;
-  font-size: 16px;
-  color: #fff;
-  padding: 0 45px 0 20px;
-  outline: none;
+  background: transparent url('https://www.transparenttextures.com/patterns/stardust.png') repeat;
+  opacity: 300;
+  animation: twinkle 6s infinite alternate;
+  z-index: 1;
+  pointer-events: none;
 }
 
-.input-box input::placeholder {
-  color: #ffffff;
+@keyframes twinkle {
+  0% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+  100% { opacity: 0.35; }
 }
 
-.input-box i {
-  position: absolute;
-  right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 20px;
-}
-
-/* ===== 記住我 / 忘記密碼 ===== */
-.remember-forgot {
-  display: flex;
-  justify-content: space-between;
-  font-size: 14.5px;
-  margin: -10px 0 20px;
-}
-
-.remember-forgot label input {
-  accent-color: #fff;
-  margin-right: 3px;
-}
-
-.remember-forgot a {
-  color: #fff;
-  text-decoration: none;
-}
-
-.remember-forgot a:hover {
-  text-decoration: underline;
-}
-
-/* ===== 登入按鈕 ===== */
-.btn {
-  width: 100%;
-  height: 45px;
-  background-color: #fff;
-  border: none;
-  border-radius: 40px;
-  cursor: pointer;
-  font-size: 16px;
-  color: #333;
-  font-weight: 600;
-  transition: 0.3s;
-}
-
-.btn:hover {
-  background-color: #ddd;
-}
-
-/* ===== 註冊連結 ===== */
-.register-link {
-  font-size: 14.5px;
-  text-align: center;
-  margin-top: 20px;
-}
-
-.register-link p a {
-  color: #fff;
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.register-link p a:hover {
-  text-decoration: underline;
-}
-
-/* ===== Footer ===== */
 footer {
   position: fixed;
   bottom: 10px;
   right: 20px;
   font-size: 12px;
   color: rgba(255,255,255,0.6);
+  z-index: 5;
 }
 
-/* ===== 互動效果 ===== */
-img {
-  transition: transform 0.3s ease;
+/* ===== 主要內容 ===== */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  z-index: 10;
 }
 
-img:hover {
-  transform: scale(1.1);
+.hero-text {
+  font-size: 2.6rem;
+  font-weight: 800;
+  opacity: 0;
+  transform: translateY(-50px);
+  animation: slideDown 1.2s forwards;
+  animation-delay: 0.6s;
+  margin-bottom: 35px;
+  letter-spacing: 2px;
+  text-shadow: 0 0 25px rgba(255,255,255,0.15);
 }
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-50px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Google 登入按鈕 ===== */
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 40px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-radius: 50px;
+  border: none;
+  cursor: pointer;
+  color: white;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+
+  /* 漸層背景流動 */
+  background: linear-gradient(270deg, #4285F4, #34A853, #FBBC05, #EA4335);
+  background-size: 400% 400%;
+  animation: gradientShift 6s ease infinite, glowPulse 3s ease-in-out infinite;
+
+  /* 初始光暈 */
+  box-shadow: 0 0 25px rgba(66,133,244,0.4),
+              0 0 45px rgba(234,67,53,0.2);
+
+  /* 平滑過渡 */
+  transition: all 0.8s ease;
+}
+
+/* 背景漸層動畫 */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* 光暈呼吸閃爍 */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 25px rgba(255,255,255,0.2), 0 0 45px rgba(255,255,255,0.15); }
+  50% { box-shadow: 0 0 60px rgba(255,255,255,0.6), 0 0 100px rgba(255,255,255,0.3); }
+}
+
+/* 光條滑動效果 */
+.google-btn::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.6), transparent);
+  transform: skewX(-25deg);
+  z-index: 0;
+  transition: left 0.6s ease;
+}
+
+/* 滑鼠 hover 效果 */
+.google-btn:hover {
+  transform: scale(1.005) translateY(-3px);
+  box-shadow: 0 0 80px rgba(255,255,255,0.6),
+              0 0 120px rgba(255,255,255,0.4),
+              inset 0 0 25px rgba(255,255,255,0.2);
+}
+
+.google-btn:hover::before {
+  left: 120%;
+}
+
+/* 點擊效果 */
+.google-btn:active {
+  transform: scale(1.005);
+  box-shadow: 0 0 40px rgba(255,255,255,0.3);
+}
+
+/* ===== 手機版調整 ===== */
+@media screen and (max-width: 480px) {
+  .hero-text { font-size: 1.8rem; }
+  .google-btn { padding: 12px 30px; font-size: 1rem; }
+  } 
+  .google-btn {
+    padding: 12px 25px;   /* 按鈕縮小 */
+    font-size: 1rem;      /* 字體縮小 */
+    width: 80%;           /* 按鈕寬度適應手機 */
+    max-width: 300px;
+  }
+
+  .loginhomepage {
+    padding: 20px 10px;   /* 上下左右留白 */
+  }
+
+  .stars {
+    background-size: 150px 150px; /* 星星圖案縮小，更精細 */
+  }
+

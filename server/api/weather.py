@@ -6,6 +6,7 @@ from core import calculation
 from scheduler import jobs
 from core import codes
 from services import discord_sender
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -144,14 +145,21 @@ async def get_summary(county_name: str = "", county_code: str = "") -> Dict[str,
 
         # Image metrics from the consolidated cache
         image_metrics = jobs.CACHED_IMAGE_METRICS.get(decoded_county_name) or {}
+        # 兼容不同鍵名（作業程序可能存為 daily_rain/nowcast）
+        daily_rain = image_metrics.get("ncdr_daily_rain") or image_metrics.get("daily_rain")
+        nowcast = image_metrics.get("ncdr_nowcast") or image_metrics.get("nowcast")
 
         resp = {
             "county": decoded_county_name,
             "temperature": elements.get("T"),
             "weather_description": elements.get("Wx"),
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": nowcast,
+            "ncdr_daily_rain": daily_rain,
         }
         logger.info(f"Successfully fetched summary for county: {decoded_county_name}")
         return resp
@@ -236,13 +244,37 @@ async def get_township_forecast(township_name: str = "", township_code: str = ""
         # Attach county-derived metrics from the consolidated image metrics cache
         county_name = codes.resolve_county_from_township_name(decoded_township_name)
         image_metrics = jobs.CACHED_IMAGE_METRICS.get(county_name) or {}
+        # 兼容不同鍵名（作業程序可能存為 daily_rain/nowcast）
+        daily_rain = image_metrics.get("ncdr_daily_rain") or image_metrics.get("daily_rain")
+        nowcast = image_metrics.get("ncdr_nowcast") or image_metrics.get("nowcast")
 
         response = {
             **forecast,
-            "qpf12_mm_per_hr": image_metrics.get("qpf12_mm_per_hr"),
-            "qpf6_mm_per_hr": image_metrics.get("qpf6_mm_per_hr"),
+            "qpf12_max_mm_per_hr": image_metrics.get("qpf12_max_mm_per_hr"),
+            "qpf12_min_mm_per_hr": image_metrics.get("qpf12_min_mm_per_hr"),
+            "qpf6_max_mm_per_hr": image_metrics.get("qpf6_max_mm_per_hr"),
+            "qpf6_min_mm_per_hr": image_metrics.get("qpf6_min_mm_per_hr"),
             "aqi_level": image_metrics.get("aqi_level"),
+            "ncdr_nowcast": nowcast,
+            "ncdr_daily_rain": daily_rain,
         }
+        
+        # Format and send to Discord
+        message = f"""
+        **Weather Report for {response['township']}**
+
+        **CWA Forecast:**
+        - Temperature: {response['cwa_forecast']['temperature']}
+        - Weather: {response['cwa_forecast']['weather_description']}
+        - 12h Rain Chance: {response['cwa_forecast'].get('chance_of_rain_12h', 'N/A')}
+
+        **Image Analysis:**
+        - QPF 12h (min/max): {response.get('qpf12_min_mm_per_hr', 'N/A')} / {response.get('qpf12_max_mm_per_hr', 'N/A')}
+        - QPF 6h (min/max): {response.get('qpf6_min_mm_per_hr', 'N/A')} / {response.get('qpf6_max_mm_per_hr', 'N/A')}
+        - AQI Level: {response.get('aqi_level', 'N/A')}
+        """
+        await asyncio.to_thread(discord_sender.send_to_discord, message)
+
         logger.info(f"Successfully fetched forecast for township: {decoded_township_name}")
         return response
 
@@ -307,13 +339,13 @@ async def notify_township(township_name: str):
             f"溫度: {forecast['cwa_forecast'].get('temperature')}\n"
             f"天氣概況: {forecast['cwa_forecast'].get('weather_description')}\n"
             f"12小時降雨機率(鄉): {forecast['cwa_forecast'].get('chance_of_rain_12h')}\n"
-            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_mm_per_hr')}\n"
-            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_mm_per_hr')}\n"
+            f"12小時降雨強度(縣, mm/hr): {image_metrics.get('qpf12_min_mm_per_hr')} - {image_metrics.get('qpf12_max_mm_per_hr')}\n"
+            f"6小時降雨強度(縣, mm/hr): {image_metrics.get('qpf6_min_mm_per_hr')} - {image_metrics.get('qpf6_max_mm_per_hr')}\n"
             f"AQI 等級(縣): {image_metrics.get('aqi_level')}\n"
         )
 
         try:
-            discord_sender.send_to_discord(msg)
+            await asyncio.to_thread(discord_sender.send_to_discord, msg)
             logger.info(f"Successfully sent Discord notification for township: {decoded_township_name}")
             return {"ok": True}
         except Exception as e:

@@ -3,6 +3,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import config
+import json
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 
@@ -46,79 +47,69 @@ def create_session():
     session.mount('https://', HTTPAdapter(max_retries=retry))
     return session
 
-def get_cwa_township_forecast_data(city: str = None):
+def get_cwa_township_forecast_data(city: str):
     """
-    Fetches 36-hour weather forecast data for townships.
-    Args:
-        city: Optional city name. If provided, fetches data for that city only.
-              If None, fetches data for all cities.
+    Fetches township weather forecast data for a specific city.
     """
     session = create_session()
-    verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
-    
-    if city:
-        dataset_id = CWA_TOWNSHIP_CODES.get(city)
-        if not dataset_id:
-            print(f"Invalid city name: {city}")
-            return None
-        urls = [(city, f"{CWA_API_URL}{dataset_id}")]
-    else:
-        # 如果沒有指定城市，獲取所有城市的資料
-        urls = [(city, f"{CWA_API_URL}{code}") for city, code in CWA_TOWNSHIP_CODES.items()]
-
-    all_data = []
-    for city_name, url in urls:
-        try:
-            print(f"Fetching CWA township forecast data for {city_name or 'all cities'}...")
-            response = session.get(
-                url, 
-                params={"Authorization": config.CWA_API_KEY},
-                verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data and 'records' in data:
-                if 'location' in data['records']:
-                    # 對應單一縣市的鄉鎮資料
-                    all_data.append({
-                        'locations': [{
-                            'location': data['records']['location']
-                        }]
-                    })
-                elif 'locations' in data['records']:
-                    # 對應多縣市的鄉鎮資料
-                    all_data.append(data['records'])
-            print(f"Successfully fetched CWA data for {city_name or 'all cities'}.")
-        except requests.exceptions.SSLError as e:
-            print(f"SSL error fetching CWA township data for {city_name}: {e}")
-            if getattr(config, "ALLOW_INSECURE_FALLBACK", False):
-                try:
-                    print(f"Retrying CWA township request for {city_name} with verify=False...")
-                    response = requests.get(url, params={"Authorization": config.CWA_API_KEY}, 
-                                         verify=False)
-                    response.raise_for_status()
-                    data = response.json()
-                    if data and 'records' in data:
-                        all_data.append(data['records'])
-                    print(f"Successfully fetched CWA data for {city_name} (insecure fallback).")
-                except requests.exceptions.RequestException as e2:
-                    print(f"Fallback request failed for {city_name}: {e2}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching CWA township data for {city_name}: {e}")
-    
-    if not all_data:
+    dataset_id = CWA_TOWNSHIP_CODES.get(city)
+    if not dataset_id:
+        print(f"Invalid city name: {city}")
         return None
-    
-    # 合併所有數據
-    return {
-        'records': {
-            'locations': all_data
-        }
+
+    url = f"{CWA_API_URL}{dataset_id}"
+    all_locations = []
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
+    }
+    params = {
+        "Authorization": config.CWA_API_KEY,
     }
 
-CWA_TOWNSHIP_FORECAST_ID = "F-D0047-093"  # 鄉鎮天氣預報
+    try:
+        print(f"Fetching CWA township forecast data for {city}...")
+        response = session.get(
+            url,
+            params=params,
+            headers=headers,
+            verify=certifi.where() if getattr(config, "REQUESTS_VERIFY_SSL", True) else False
+        )
+        response.raise_for_status()
 
+        try:
+            data = response.json()
+            records = data.get('records', {})
+            
+            location_groups = records.get('Locations', records.get('locations'))
+            if isinstance(location_groups, list):
+                for loc_group in location_groups:
+                    if isinstance(loc_group, dict):
+                        locations = loc_group.get('Location', loc_group.get('location'))
+                        if isinstance(locations, list):
+                            all_locations.extend(locations)
+            elif 'location' in records:
+                 all_locations.extend(records['location'])
 
+            print(f"Successfully fetched and parsed CWA data for {city}. Found {len(all_locations)} locations.")
+
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            print(f"CRITICAL: Failed to decode or parse JSON for {city}. Error: {e}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"CRITICAL: Error fetching CWA township data for {city}. Error: {e}")
+        return None
+
+    if not all_locations:
+        print(f"Warning: No locations found for {city} after successful fetch.")
+        return None
+
+    return {
+        'records': {
+            'location': all_locations
+        }
+    }
 
 def get_cwa_county_forecast_data():
     """
@@ -126,7 +117,7 @@ def get_cwa_county_forecast_data():
     """
     session = create_session()
     url = f"{CWA_API_URL}{CWA_COUNTY_FORECAST_ID}"
-    params = {"Authorization": config.CWA_API_KEY}
+    params = {"Authorization": config.CWA_API_KEY, "elementName": "MinT,MaxT,Wx,PoP"}
     verify = getattr(config, "REQUESTS_VERIFY_SSL", True)
     
     try:

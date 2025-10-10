@@ -1,116 +1,96 @@
-
 import datetime
 from scheduler import jobs
 from . import codes
+import json
 
-def generate_json_output():
+def generate_unified_json():
     """
-    Generates the final JSON output by combining CWA and AQI data.
+    Generates a single, unified JSON object containing all forecast data for every township in Taiwan.
+    This function is the single source of truth for creating the final data package.
     """
-    update_time = datetime.datetime.now().isoformat()
+    print("Starting generation of unified JSON for all townships...")
     
+    # 1. Get all cached data sources
+    update_time = datetime.datetime.now().isoformat()
     cwa_county_data = jobs.get_cached_weather_data().get('county_weather')
     cwa_township_data = jobs.get_cached_weather_data().get('township_weather')
     image_metrics = jobs.CACHED_IMAGE_METRICS
-    
+
     if not cwa_county_data or not cwa_township_data:
+        print("Error: CWA data caches are not available. Cannot generate unified JSON.")
         return None
-        
-    final_json = {
+
+    final_data = {
         "update_time": update_time,
+        "towns": {}
     }
-    
-    # Helper to extract the first parameter name from a weather element
-    def get_weather_element(elements, element_name):
-        for element in elements:
-            if element.get('elementName') == element_name:
-                time_entry = element.get('time', [{}])[0]
-                parameter = time_entry.get('parameter', {})
-                return parameter.get('parameterName')
-        return None
 
-    # Helper to extract rain probability from township data
-    def get_town_rain_prob(town_weather_element, pop_element_name):
-        for element in town_weather_element:
-            if element.get('elementName') == pop_element_name:
-                time_entry = element.get('time', [{}])[0]
-                if 'elementValue' in time_entry:
-                    return time_entry['elementValue'][0].get('value')
-        return None
+    # 2. Iterate through every known township
+    for township_full_name, township_code in codes.TOWNSHIP_NAME_TO_CODE.items():
+        
+        # 3. For each township, find its data from all sources
+        county_name = codes.resolve_county_from_township_name(township_full_name)
+        
+        # Normalize names for cache lookups
+        normalized_town_name = codes.normalize_name(township_full_name)
+        normalized_county_name = codes.normalize_name(county_name)
 
-    # Process county data
-    for county in cwa_county_data.get('records', {}).get('location', []):
-        county_name = county.get('locationName')
-        county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
-        
-        if not county_code:
-            continue
-            
-        weather_elements = county.get('weatherElement', [])
-        
-        # Calculate average temperature
-        min_temp_str = get_weather_element(weather_elements, 'MinT')
-        max_temp_str = get_weather_element(weather_elements, 'MaxT')
-        
-        avg_temp = None
-        if min_temp_str and max_temp_str:
-            try:
-                avg_temp = (float(min_temp_str) + float(max_temp_str)) / 2
-            except (ValueError, TypeError):
-                avg_temp = None
+        # Get data from CWA caches
+        town_cwa = cwa_township_data.get(normalized_town_name)
+        county_cwa = cwa_county_data.get(normalized_county_name)
 
-        final_json[county_code] = {
-            "name": county_name,
-            "temp": avg_temp,
-            "weather": get_weather_element(weather_elements, 'Wx'),
-            "rain_6h": None, # Placeholder, will be populated from township data
-            "rain_12h": None, # Placeholder, will be populated from township data
-            "aqi": image_metrics.get('aqi_level') if image_metrics else None,
-            "towns": {}
+        # Get data from image analysis cache
+        county_image_metrics = image_metrics.get(county_name) or {}
+
+        # --- Start assembling the data for one township ---
+        
+        # From county-level CWA data
+        temperature = county_cwa.get('temperature') if county_cwa else None
+        
+        # From township-level CWA data
+        pop6h = None
+        pop12h = None
+        weather_description = None
+        if town_cwa and town_cwa.get('weatherElement'):
+            for element in town_cwa['weatherElement']:
+                element_name = element.get('elementName')
+                time_data = element.get('time', [{}])[0]
+                
+                if element_name == '天氣現象':
+                    weather_description = time_data.get('elementValue', [{}])[0].get('value')
+                # The CWA township data provides PoP in 3-hour intervals.
+                elif element_name == '3小時降雨機率':
+                    pop_value = time_data.get('elementValue', [{}])[0].get('value')
+                    # Use the first 3-hour value for both 6h and 12h for now.
+                    if pop6h is None: # Only assign once
+                        pop6h = pop_value
+                    if pop12h is None: # Only assign once
+                        pop12h = pop_value
+
+        # Assemble all data into a single object
+        township_data_object = {
+            "township_name": township_full_name,
+            "county_name": county_name,
+            "temperature": temperature,
+            "weather_description": weather_description,
+            "pop6h": pop6h,
+            "pop12h": pop12h,
+            "aqi_level": county_image_metrics.get("aqi_level"),
+            "cwa_qpf_6h_min": county_image_metrics.get("qpf6_min_mm_per_hr"),
+            "cwa_qpf_6h_max": county_image_metrics.get("qpf6_max_mm_per_hr"),
+            "cwa_qpf_12h_min": county_image_metrics.get("qpf12_min_mm_per_hr"),
+            "cwa_qpf_12h_max": county_image_metrics.get("qpf12_max_mm_per_hr"),
+            "ncdr_daily_rain_min": (county_image_metrics.get("ncdr_daily_rain") or {}).get("min"),
+            "ncdr_daily_rain_max": (county_image_metrics.get("ncdr_daily_rain") or {}).get("max"),
+            "ncdr_nowcast": county_image_metrics.get("ncdr_nowcast"),
         }
+        
+        final_data["towns"][township_code] = township_data_object
 
-    # Process township data
-    if cwa_township_data.get('records'):
-        locations = cwa_township_data['records'].get('locations', [])
-        for county_towns in locations:
-            county_name = county_towns.get('locationsName')
-            county_code = codes.COUNTY_NAME_TO_CODE.get(county_name)
+    print(f"Successfully generated unified JSON for {len(final_data['towns'])} townships.")
+    return final_data
 
-            if not county_code or county_code not in final_json:
-                continue
-
-            town_rain_6h = []
-            town_rain_12h = []
-
-            for town in county_towns.get('location', []):
-                town_name = town.get('locationName')
-                town_code = codes.TOWNSHIP_NAME_TO_CODE.get(f"{county_name}{town_name}")
-                
-                if not town_code:
-                    continue
-
-                weather_element = town.get('weatherElement', [])
-                rain_6h_str = get_town_rain_prob(weather_element, '6小時降雨機率')
-                rain_12h_str = get_town_rain_prob(weather_element, '12小時降雨機率')
-
-                rain_6h = int(rain_6h_str) if rain_6h_str and rain_6h_str.isdigit() else None
-                rain_12h = int(rain_12h_str) if rain_12h_str and rain_12h_str.isdigit() else None
-                
-                if rain_6h is not None:
-                    town_rain_6h.append(rain_6h)
-                
-                if rain_12h is not None:
-                    town_rain_12h.append(rain_12h)
-
-                final_json[county_code]['towns'][town_code] = {
-                    "rain_6h": rain_6h,
-                    "rain_12h": rain_12h,
-                }
-            
-            # Calculate average rain probability for the county
-            if town_rain_6h:
-                final_json[county_code]['rain_6h'] = sum(town_rain_6h) / len(town_rain_6h)
-            if town_rain_12h:
-                final_json[county_code]['rain_12h'] = sum(town_rain_12h) / len(town_rain_12h)
-
-    return final_json
+# This function is kept for compatibility with older parts of the code if needed,
+# but generate_unified_json is the new primary function.
+def generate_json_output():
+    return generate_unified_json()

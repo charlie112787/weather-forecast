@@ -8,6 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from api.weather import router as weather_router
+from api.fcm import fcm_router # 引入新的 fcm_router
 import asyncio
 from scheduler import jobs
 from scheduler.jobs import scheduler
@@ -40,6 +41,7 @@ async def root():
     return {"message": "Welcome to the Weather Forecast API"}
 
 app.include_router(weather_router, prefix="/api/weather")
+app.include_router(fcm_router) # 包含 fcm_router
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8100, reload=True)

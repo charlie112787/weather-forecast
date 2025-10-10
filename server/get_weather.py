@@ -23,7 +23,7 @@ def main():
     township_name = "中正區"
 
     # 1. Fetch data
-    township_data = get_cwa_township_forecast_data(county_name)
+    township_data = get_cwa_township_forecast_data()
 
     if not township_data:
         print("Could not fetch weather data.")

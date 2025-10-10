@@ -18,7 +18,7 @@ html,body{height:100%;}
 body{
   margin:0;
   font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial;
-  background: url("../image/image/homepage/homepage\ background.png") center/cover no-repeat fixed;
+  background: linear-gradient(180deg, #0b0d1e, #545454, #bbbbbb, #b5b5b5);
   color:#e6eef6;
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
@@ -34,7 +34,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .brand p{margin:0;font-size:12px;color:var(--muted)}
 .search{display:flex;gap:8px;align-items:center}
 .search input{background:var(--glass);border:1px solid rgba(255,255,255,0.04);padding:10px 12px;border-radius:12px;color:inherit;outline:none;width:220px}
-.search button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:10px 12px;border-radius:12px;cursor:pointer}
+.search button{background:transparent;border:1px solid rgba(163, 163, 163, 0.669);padding:10px 12px;border-radius:12px;cursor:pointer}
 main{display:grid;grid-template-columns:1fr;gap:var(--gap)}
 
 @media(min-width:900px){
@@ -42,7 +42,7 @@ main{display:grid;grid-template-columns:1fr;gap:var(--gap)}
 }
 
 /* Card */
-.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:18px;border-radius:var(--radius);box-shadow:0 6px 18px rgba(2,6,23,0.6);}
+.card{background:linear-gradient(180deg, rgba(255, 255, 255, 0.937), rgba(255, 255, 255, 0.646));padding:18px;border-radius:var(--radius);box-shadow:0 6px 18px rgba(2,6,23,0.6);}
 .current{display:flex;flex-direction:column;gap:12px;align-items:flex-start;min-height:320px}
 .top-row{display:flex;align-items:center;gap:12px;width:100%}
 .temp{font-size:56px;font-weight:700;line-height:1}
@@ -98,6 +98,25 @@ footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
   .icon-svg{width:48px;height:48px}
 }
 
+.settings-save-btn {
+  width: 100%;
+  margin-top: 12px;
+  background-color: var(--accent);
+  color: #fff;
+  border: none;
+  outline: none;
+  border-radius: 12px; /* 保持與輸入框一致的圓角 */
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.settings-save-btn:hover {
+  background-color: var(--accent-2); /* 懸停效果 */
+}
+
 .info-bar {
   width: 100%;
   background: rgba(0,0,0,0.6); /* 半透明黑底 */
@@ -118,8 +137,88 @@ footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
 .info-bar span {
   white-space: nowrap;
 }
-
 body {
   padding-top: 80px; /* 預留頂部空間給 info-bar */
 }
 
+/* ====== Login Page Styles (Merged from style-login.css) ====== */
+#login-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: url(../image/image/homepage/homepage\ background.png); /* 使用主頁背景 */
+  background-size: cover;
+  background-position: center;
+  position: fixed; /* 固定在最上層 */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9999; /* 確保在最上層 */
+}
+
+#login-content .wrapper{
+    width: 420px;
+    background: transparent;
+    border: 2px solid rgba(255 , 255, 255, .2);
+    backdrop-filter: blur(20px);
+    box-shadow: 0, 0, 0, 10px rgba(255 , 255, 255, .2);
+    color: #ffffff;
+    padding: 30px 40px;
+    justify-content: center;
+    align-items: center;
+    background-position: center;
+    align-items: center;
+    display: flex;
+    flex-direction: column; /* 讓內容垂直排列 */
+    justify-content: center; 
+}
+
+#login-content .wrapper h1{
+    font-size: 36px;
+    text-align: center;
+    margin-bottom: 20px; /* 添加間距 */
+}
+
+#login-content .wrapper p {
+    text-align: center;
+    color: #eee;
+    margin: 10px 0 30px 0; /* 調整間距 */
+}
+
+#login-content #error-message {
+    color: #ffcccc;
+    text-align: center;
+    margin-bottom: 15px;
+    display: none;
+}
+
+/* Google Sign-In Button Styles */
+#login-content .google-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 50px;
+    background-color: #4285F4;
+    border: none;
+    outline: none;
+    border-radius: 40px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .2);
+    cursor: pointer;
+    font-size: 16px;
+    color: #fff;
+    font-weight: 600;
+    transition: background-color .3s;
+}
+#login-content .google-btn:hover {
+    background-color: #357ae8;
+}
+#login-content .google-btn img {
+    width: 20px;
+    margin-right: 12px;
+    background: #fff;
+    padding: 2px;
+    border-radius: 50%;
+}

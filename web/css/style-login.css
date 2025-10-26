@@ -1,0 +1,185 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap");
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Poppins", sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+
+/* ===== 背景動畫 - 夜空漸層 + 星光 ===== */
+.loginhomepage {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  background: linear-gradient(180deg, #0a0a1f, #1b2735, #000000, #202020);
+  background-size: 400% 400%;
+  animation: bodyGradient 3s ease infinite;
+  color: white;
+  overflow: hidden;
+  position: relative;
+}
+
+@keyframes bodyGradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ===== 星光閃爍 ===== */
+.stars {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: white;
+  border-radius: 50%;
+  box-shadow:
+    20px 50px white,
+    100px 80px white,
+    200px 120px white,
+    300px 200px white;
+  animation: twinkle 3s infinite alternate;
+  z-index: 1;
+}
+
+@keyframes twinkle {
+  0% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+  100% { opacity: 0.35; }
+}
+
+footer {
+  position: fixed;
+  bottom: 10px;
+  right: 20px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+  z-index: 5;
+}
+
+/* ===== 主要內容 ===== */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  z-index: 10;
+}
+
+.hero-text {
+  font-size: 2.6rem;
+  font-weight: 800;
+  opacity: 0;
+  transform: translateY(-50px);
+  animation: slideDown 1.2s forwards;
+  animation-delay: 0.6s;
+  margin-bottom: 35px;
+  letter-spacing: 2px;
+  text-shadow: 0 0 25px rgba(255,255,255,0.15);
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-50px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Google 登入按鈕 ===== */
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 40px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-radius: 50px;
+  border: none;
+  cursor: pointer;
+  color: white;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+
+  /* 漸層背景流動 */
+  background: linear-gradient(270deg, #4285F4, #34A853, #FBBC05, #EA4335);
+  background-size: 400% 400%;
+  animation: gradientShift 6s ease infinite, glowPulse 3s ease-in-out infinite;
+
+  /* 初始光暈 */
+  box-shadow: 0 0 25px rgba(66,133,244,0.4),
+              0 0 45px rgba(234,67,53,0.2);
+
+  /* 平滑過渡 */
+  transition: all 0.8s ease;
+}
+
+/* 背景漸層動畫 */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* 光暈呼吸閃爍 */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 25px rgba(255,255,255,0.2), 0 0 45px rgba(255,255,255,0.15); }
+  50% { box-shadow: 0 0 60px rgba(255,255,255,0.6), 0 0 100px rgba(255,255,255,0.3); }
+}
+
+/* 光條滑動效果 */
+.google-btn::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.6), transparent);
+  transform: skewX(-25deg);
+  z-index: 0;
+  transition: left 0.6s ease;
+}
+
+/* 滑鼠 hover 效果 */
+.google-btn:hover {
+  transform: scale(1.005) translateY(-3px);
+  box-shadow: 0 0 80px rgba(255,255,255,0.6),
+              0 0 120px rgba(255,255,255,0.4),
+              inset 0 0 25px rgba(255,255,255,0.2);
+}
+
+.google-btn:hover::before {
+  left: 120%;
+}
+
+/* 點擊效果 */
+.google-btn:active {
+  transform: scale(1.005);
+  box-shadow: 0 0 40px rgba(255,255,255,0.3);
+}
+
+/* ===== 手機版調整 ===== */
+@media screen and (max-width: 480px) {
+  .hero-text { font-size: 1.8rem; }
+  .google-btn { padding: 12px 30px; font-size: 1rem; }
+  } 
+  .google-btn {
+    padding: 12px 25px;   /* 按鈕縮小 */
+    font-size: 1rem;      /* 字體縮小 */
+    width: 80%;           /* 按鈕寬度適應手機 */
+    max-width: 300px;
+  }
+
+  .loginhomepage {
+    padding: 20px 10px;   /* 上下左右留白 */
+  }
+
+  .stars {
+    background-size: 150px 150px; /* 星星圖案縮小，更精細 */
+  }
+

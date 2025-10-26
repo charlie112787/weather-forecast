@@ -1,4 +1,9 @@
-import { COUNTY_NAME_TO_CODE, LOCATION_DATA, CODE_TO_TOWNSHIP_NAME } from './location_data.js';
+/*這兩段可刪*/
+document.getElementById("login-content").style.display = "none";
+document.getElementById("app-content").style.display = "block";
+/*   上面   */
+
+import { COUNTY_NAME_TO_CODE, LOCATION_DATA, CODE_TO_TOWNSHIP_NAME } from '../js/location_data.js';
 import { db } from './firebase.js';
 
 // 將 messaging 變數提升到共用作用域

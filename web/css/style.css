@@ -421,10 +421,20 @@ footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center;}
 .form-group select:focus {
   background: rgba(255,255,255,0.15);
   box-shadow: 0 0 10px rgba(79,182,255,0.5);
+} 
+
+select {
+  background: var(--glass);
+  color: #ccc;
+  border: 1px solid rgba(255,255,255,0.2);
 }
 
-/* ====== 儲存按鈕 ====== */
-.settings-save-btn {
+select option {
+  background: #333;
+  color: #fff;
+}
+
+/* ====== 儲存按鈕 ====== */.settings-save-btn {
   width: 100%;
   margin-top: 16px;
   background-color: var(--accent);

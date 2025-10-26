@@ -1,7 +1,4 @@
-/*這兩段可刪*/
-document.getElementById("login-content").style.display = "none";
-document.getElementById("app-content").style.display = "block";
-/*   上面   */
+
 
 import { COUNTY_NAME_TO_CODE, LOCATION_DATA, CODE_TO_TOWNSHIP_NAME } from '../js/location_data.js';
 import { db } from './firebase.js';
@@ -9,26 +6,28 @@ import { db } from './firebase.js';
 // 將 messaging 變數提升到共用作用域
 let messaging;
 
-document.addEventListener('DOMContentLoaded', () => {
-    const appContent = document.getElementById('app-content');
-    const loginContent = document.getElementById('login-content');
-    const googleLoginBtn = document.getElementById('google-login-btn');
-    const errorMessageDiv = document.getElementById('error-message');
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeUserSettings(null); // Call this on page load
 
-    // Firebase 登入狀態監聽器
-    firebase.auth().onAuthStateChanged(user => {
-        if (user) {
-            console.log('使用者已登入:', user.email);
-            appContent.style.display = 'block';
-            loginContent.style.display = 'none';
-            initializeUserSettings(user);
-            initializeFCM(user);
-        } else {
-            console.log('使用者未登入');
-            appContent.style.display = 'none';
-            loginContent.style.display = 'flex';
-        }
-    });
+        const appContent = document.getElementById('app-content');
+        const loginContent = document.getElementById('login-content');
+        const googleLoginBtn = document.getElementById('google-login-btn');
+        const errorMessageDiv = document.getElementById('error-message');
+
+        // Firebase 登入狀態監聽器
+        firebase.auth().onAuthStateChanged(user => {
+            if (user) {
+                console.log('使用者已登入:', user.email);
+                appContent.style.display = 'block';
+                loginContent.style.display = 'none';
+                initializeUserSettings(user); // Re-initialize with user data
+                initializeFCM(user);
+            } else {
+                console.log('使用者未登入');
+                appContent.style.display = 'none';
+                loginContent.style.display = 'flex';
+            }
+        });
 
     if (googleLoginBtn) {
         googleLoginBtn.addEventListener('click', signInWithGoogle);
@@ -90,13 +89,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const userDocRef = db.collection('users').doc(user.uid);
-
         // --- 填充選單函式 ---
         function populateCountySelect() {
             countySelect.innerHTML = '<option value="">請選擇縣市</option>';
             for (const countyName in COUNTY_NAME_TO_CODE) {
-                countySelect.innerHTML += `<option value="${countyName}">${countyName}</option>`;
+                const option = new Option(countyName, countyName);
+                countySelect.add(option);
             }
         }
 
@@ -105,15 +103,26 @@ document.addEventListener('DOMContentLoaded', () => {
             if (selectedCountyName && LOCATION_DATA[selectedCountyName]) {
                 for (const townshipName in LOCATION_DATA[selectedCountyName]) {
                     const code = LOCATION_DATA[selectedCountyName][townshipName];
-                    townshipSelect.innerHTML += `<option value="${code}">${townshipName}</option>`;
+                    const option = new Option(townshipName, code);
+                    townshipSelect.add(option);
                 }
             }
         }
 
-        countySelect.addEventListener('change', () => populateTownshipSelect(countySelect.value));
+        countySelect.addEventListener('change', () => {
+            populateTownshipSelect(countySelect.value);
+        });
 
         populateCountySelect();
-        populateTownshipSelect(null);
+        const firstCounty = Object.keys(COUNTY_NAME_TO_CODE)[0];
+        populateTownshipSelect(firstCounty);
+
+        if (!user) {
+            return; // Do not proceed if user is not logged in
+        }
+
+        const userDocRef = db.collection('users').doc(user.uid);
+
 
         // 讀取使用者設定
         try {

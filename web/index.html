@@ -3,13 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  
-<<<<<<< HEAD
- 
-  <link rel="icon" type="image/png" href="../web/image/image/TWAlogo.png">
-=======
+
   <link rel="icon" type="image/png" href="../web/image/image/TWA-LOGO.png">
->>>>>>> 7323a6e2e4fd929a31ec4860880ad725e0163783
 
   <title>Taiwan Weather Alert</title>
 
@@ -22,13 +17,6 @@
 <body>
     <div id="app-content" style="display: none;">
         <header>
-        <div class="info-bar">
-        <span>溫度: --°C</span>
-        <span>天氣概況: ----</span>
-        <span>降雨機率: --%</span>
-        <span>空氣品質: -- (AQI --)</span>
-        </div>
-
 
         <div class="container">
         <header>
@@ -42,7 +30,7 @@
 
         <div class="search">
             <input id="cityInput" placeholder="輸入城市（例如：Taipei）" />
-            <button id="searchBtn">查詢</button>
+             <div class="searchword"><button id="searchBtn">查詢</button></div>
         </div>
         </header>
 
@@ -97,15 +85,16 @@
             <div class="card chart-box" id="chartCard">
             <canvas id="tempChart" width="600" height="220"></canvas>
             </div>
+        <div class="card upload-card">
+          <h3>上傳背景圖片</h3>
+            <p class="upload-desc">選擇一張圖片作為網站背景</p>
 
-            <div class="card">
-            <h3>介面說明（給設計師）</h3>
-            <ul style="color:var(--muted);line-height:1.6">
-                <li>背景為可更換漸層或圖片，修改 style.css 中 body 部分。</li>
-                <li>Icon 建議使用 SVG，可加動畫或濾鏡效果。</li>
-                <li>天氣卡片可依天氣狀況切換底圖。</li>
-            </ul>
-            </div>
+           <label class="background-upload-btn" for="bgUpload">
+           上傳背景
+         </label>
+         <input type="file" id="bgUpload" accept="image/*" style="display:none;">
+        </div>
+
         </aside>
         </main>
 
@@ -129,6 +118,49 @@
   </div>
 
 
+
+
+
+<script>
+  const bgInput = document.getElementById("bgUpload");
+
+  bgInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      // 將 body 背景設為上傳的圖片
+      document.body.style.backgroundImage = `url('${event.target.result}')`;
+      document.body.style.backgroundSize = "cover";
+      document.body.style.backgroundPosition = "center";
+    };
+    reader.readAsDataURL(file);
+  });
+</script>
+
+
+  <script>
+document.addEventListener("DOMContentLoaded", () => {
+  const loginContent = document.getElementById("login-content");
+  const appContent = document.getElementById("app-content");
+  const loginBtn = document.getElementById("google-login-btn");
+
+  // 🔹 自動跳過登入畫面
+  // 若不想自動跳過，註解掉這兩行即可
+  loginContent.style.display = "none";
+  appContent.style.display = "block";
+
+  // 🔹 點擊登入按鈕時的行為（這裡模擬登入）
+  loginBtn.addEventListener("click", () => {
+    loginContent.style.display = "none";
+    appContent.style.display = "block";
+  });
+});
+</script>
+
+
+
   <!-- Firebase SDK (Compat) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
@@ -136,7 +168,9 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-messaging.js"></script>
 
   <!-- Your Scripts -->
-  <script src="js/firebase.js" type="module"></script>
-  <script src="js/main.js" type="module"></script>
+  <script src="../web/js/location_data.js" type="module"></script>
+  <script src="../web/js/firebase.js" type="module"></script>
+  <script src="../web/js/main.js " type="module"></script>
+  <script src="../web/js/animition.js" type="module"></script>
 </body>
 </html>
